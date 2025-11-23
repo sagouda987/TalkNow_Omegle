@@ -285,48 +285,136 @@ return () => document.head.removeChild(style);
   }
 
   async function startWebRTC(isInitiator) {
-    // create PC
-    pcRef.current = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      // add TURN servers here for real-world NAT traversal
-    });
-    const pc = pcRef.current;
+  // create PC
+  pcRef.current = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    // add TURN servers here for real-world NAT traversal
+  });
+  const pc = pcRef.current;
 
-    // setup remote stream
-    remoteStreamRef.current = new MediaStream();
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current;
+  // setup remote stream
+  remoteStreamRef.current = new MediaStream();
+  if (remoteVideoRef.current) {
+    remoteVideoRef.current.srcObject = remoteStreamRef.current;
+    // try to play (mobile may block until user gesture)
+    remoteVideoRef.current.play().catch(() => {});
+  }
 
-    pc.ontrack = (e) => {
-      if (e.streams && e.streams[0]) {
-        e.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
-      }
-    };
-
-    pc.onicecandidate = (e) => {
-      if (e.candidate && peerIdRef.current && socketRef.current && socketRef.current.connected) {
-        socketRef.current.emit('sig', { to: peerIdRef.current, type: 'ice', data: e.candidate });
-      }
-    };
-
-    // data channel logic
-    if (isInitiator) {
-      const dc = pc.createDataChannel('chat');
-      setupDataChannel(dc);
+  pc.ontrack = (e) => {
+    // prefer attached streams (some browsers provide e.streams[0])
+    if (e.streams && e.streams[0]) {
+      e.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
     } else {
-      pc.ondatachannel = (e) => setupDataChannel(e.channel);
+      // fallback: individual track(s)
+      remoteStreamRef.current.addTrack(e.track);
+    }
+  };
+
+  pc.onicecandidate = (e) => {
+    if (e.candidate && peerIdRef.current && socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('sig', { to: peerIdRef.current, type: 'ice', data: e.candidate });
+    }
+  };
+
+  // data channel logic
+  if (isInitiator) {
+    const dc = pc.createDataChannel('chat');
+    setupDataChannel(dc);
+  } else {
+    pc.ondatachannel = (e) => setupDataChannel(e.channel);
+  }
+
+  // Optional: connection state logging (helps debug mobile)
+  pc.onconnectionstatechange = () => {
+    console.log('[pc] connectionState=', pc.connectionState);
+    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+      appendSystem('Connection lost.'); // user-facing
+    }
+  };
+
+  // ✅ Check available devices FIRST
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const hasVideo = devices.some(d => d.kind === 'videoinput');
+    const hasAudio = devices.some(d => d.kind === 'audioinput');
+
+    console.log('🎥 Camera available:', hasVideo);
+    console.log('🎤 Microphone available:', hasAudio);
+
+    // Build constraints based on what's available
+    const constraints = {};
+    if (hasAudio) constraints.audio = true;
+    if (hasVideo) {
+      // prefer front camera on phones
+      constraints.video = { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
     }
 
-    // get local media
-    try {
-      localStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
-      if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
-    } catch (e) {
-      appendSystem('Camera/mic permission denied or unavailable.');
-      console.warn('getUserMedia failed', e);
+    // If neither available, show message but continue with text chat
+    if (!hasAudio && !hasVideo) {
+      appendSystem('⚠️ No camera/mic found. Text chat only.');
+      console.warn('No media devices available');
+
+      // create offer for datachannel-only (if initiator)
+      if (isInitiator) {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        if (socketRef.current && peerIdRef.current) {
+          socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
+        }
+      }
+      setState('connected');
+      return;
     }
 
-    // create offer if initiator
+    // Try to get media with available devices
+    localStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+    localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
+
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+      localVideoRef.current.play().catch(() => { /* autoplay may be blocked; okay */ });
+    }
+
+    // Show what mode we're in
+    if (hasAudio && !hasVideo) {
+      appendSystem('🎤 Audio-only mode (no camera detected)');
+    } else if (hasVideo && !hasAudio) {
+      appendSystem('🎥 Video-only mode (no microphone detected)');
+    } else {
+      appendSystem('✅ Video & audio connected');
+    }
+
+  } catch (e) {
+    console.warn('getUserMedia failed', e);
+
+    // Better error messages
+    if (e && e.name === 'NotFoundError') {
+      appendSystem('❌ Camera/mic not found. Continuing with text chat only.');
+    } else if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+      appendSystem('🔒 Permission denied. Click camera icon in address bar to allow access.');
+    } else if (e && e.name === 'NotReadableError') {
+      appendSystem('⚠️ Device in use by another app. Close other apps and try again.');
+    } else {
+      appendSystem('⚠️ Media error. Text chat still works.');
+    }
+    // proceed — create offer for datachannel only if initiator
+    if (isInitiator) {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        if (socketRef.current && peerIdRef.current) {
+          socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
+        }
+      } catch (err) {
+        console.warn('Failed to create/send offer after media error', err);
+      }
+    }
+    setState('connected');
+    return;
+  }
+
+  // create offer if initiator
+  try {
     if (isInitiator) {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -334,9 +422,13 @@ return () => document.head.removeChild(style);
         socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
       }
     }
-
-    setState('connected');
+  } catch (err) {
+    console.warn('Error creating/sending offer', err);
   }
+
+  setState('connected');
+}
+
 
   function setupDataChannel(dc) {
     dcRef.current = dc;
