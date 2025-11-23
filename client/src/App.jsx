@@ -6,7 +6,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
-const SIGNAL_URL = 'http://localhost:4000'; // change if needed
+const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || 'http://localhost:4000';
 
 export default function App() {
   // --- app state
