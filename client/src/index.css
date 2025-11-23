@@ -1,0 +1,40 @@
+:root { font-family: Inter, Arial, sans-serif; }
+body { margin:0; background:#f3f4f6; color:#111827; }
+.app-root { max-width:980px; margin:18px auto; padding:18px; }
+.header { display:flex; justify-content:space-between; align-items:center }
+.header h1 { margin:0 }
+.sub { font-size:13px; color:#666 }
+.layout { margin-top:16px; display:grid; grid-template-columns:1fr 360px; gap:16px }
+.main-card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 6px 18px rgba(20,20,50,0.06) }
+.controls { display:flex; gap:10px; align-items:center }
+.btn { padding:8px 12px; border-radius:10px; background:#0b84ff; color:#fff; border:none; cursor:pointer }
+.btn-ghost { margin-left:8px; background:#eee; color:#333 }
+.status { margin-left:auto; display:flex; gap:8px; align-items:center }
+.media-and-chat { margin-top:14px; min-height:320px; display:flex; gap:12px }
+.media-panel { flex:1; border-radius:10px; overflow:hidden; background:#111827; padding:10px }
+.videos { display:flex; gap:10px }
+.local, .remote { flex:1 }
+.caption { font-size:12px; color:#ddd; margin-bottom:8px }
+.video { width:100%; border-radius:10px; background:#000; display:block }
+.chat-section { margin-top:12 }
+.chat-header { display:flex; justify-content:space-between; align-items:center }
+.chat-title { color:#bbb }
+.btn-report { font-size:12px; padding:6px 10px; border-radius:8px; background:#ffecec; border:1px solid #f5c2c2 }
+.chat-window { margin-top:8px; height:160px; overflow:auto; padding:10px; background:rgba(255,255,255,0.02); border-radius:8px }
+.empty { color:#9aa; font-size:13px }
+.msg { margin-bottom:8px }
+.msg .from { font-size:12px; color:#8f8f8f }
+.msg .bubble { display:inline-block; padding:8px 10px; border-radius:8px; margin-top:4px }
+.msg-out .bubble { background:#d1ffe0 }
+.msg-in .bubble { background:#ffffff10 }
+.msg-system .bubble { background:#fff3c4 }
+.chat-input { display:flex; gap:8px; margin-top:8px }
+.chat-input input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid #ddd }
+.sidebar { width:260px; display:flex; flex-direction:column; gap:12px }
+.card { padding:12px; border-radius:10px; background:#fff; box-shadow:0 6px 18px rgba(20,20,50,0.06) }
+.peer-name { font-size:13px; font-weight:700 }
+.peer-status { font-size:12px; color:#666; margin-top:6px }
+.tips { margin-top:10px; font-size:12px; color:#444 }
+.card.small { padding:12px }
+.help-card { padding:14px; border-radius:10px; background:#fff; box-shadow:0 6px 18px rgba(20,20,50,0.06) }
+.controls-summary { margin-top:10px; font-size:13px; color:#444 }
