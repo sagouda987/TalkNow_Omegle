@@ -342,7 +342,7 @@ return () => document.head.removeChild(style);
     dcRef.current = dc;
     dc.onopen = () => appendSystem('You Can Text Now. Connected To Stranger');
     dc.onmessage = (e) => appendMessage({ id: Date.now(), from: 'Stranger', text: e.data });
-    dc.onclose = () => appendSystem('Data channel closed');
+    dc.onclose = () => appendSystem('Stranger disconnect, Click Start');
     dc.onerror = (err) => console.warn('DC error', err);
   }
 
