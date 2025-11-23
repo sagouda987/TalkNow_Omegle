@@ -35,50 +35,96 @@ export default function App() {
 
   // inject styles once
   useEffect(() => {
-    const css = `:root { font-family: Inter, Arial, sans-serif; }
-    body { margin:0; background:#f3f4f6; color:#111827; }
-    .app-root { max-width:980px; margin:18px auto; padding:18px; }
-    .header { display:flex; justify-content:space-between; align-items:center }
-    .header h1 { margin:0 }
-    .sub { font-size:13px; color:#666 }
-    .layout { margin-top:16px; display:grid; grid-template-columns:1fr 360px; gap:16px }
-    .main-card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 6px 18px rgba(20,20,50,0.06) }
-    .controls { display:flex; gap:10px; align-items:center }
-    .btn { padding:8px 12px; border-radius:10px; background:#0b84ff; color:#fff; border:none; cursor:pointer }
-    .btn-ghost { margin-left:8px; background:#eee; color:#333 }
-    .status { margin-left:auto; display:flex; gap:8px; align-items:center }
-    .media-and-chat { margin-top:14px; min-height:320px; display:flex; gap:12px }
-    .media-panel { flex:1; border-radius:10px; overflow:hidden; background:#111827; padding:10px }
-    .videos { display:flex; gap:10px }
-    .local, .remote { flex:1 }
-    .caption { font-size:12px; color:#ddd; margin-bottom:8px }
-    .video { width:100%; border-radius:10px; background:#000; display:block }
-    .chat-section { margin-top:12 }
-    .chat-header { display:flex; justify-content:space-between; align-items:center }
-    .chat-title { color:#bbb }
-    .btn-report { font-size:12px; padding:6px 10px; border-radius:8px; background:#ffecec; border:1px solid #f5c2c2 }
-    .chat-window { margin-top:8px; height:200px; overflow:auto; padding:10px; background:rgba(255,255,255,0.02); border-radius:8px }
-    .empty { color:#9aa; font-size:13px }
-    .msg { margin-bottom:8px }
-    .msg .from { font-size:12px; color:#8f8f8f }
-    .msg .bubble { display:inline-block; padding:8px 10px; border-radius:8px; margin-top:4px }
-    .msg-out .bubble { background:#d1ffe0 }
-    .msg-in .bubble { background:#ffffff10 }
-    .msg-system .bubble { background:#fff3c4 }
-    .chat-input { display:flex; gap:8px; margin-top:8px }
-    .chat-input input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid #ddd }
-    .sidebar { width:260px; display:flex; flex-direction:column; gap:12px }
-    .card { padding:12px; border-radius:10px; background:#fff; box-shadow:0 6px 18px rgba(20,20,50,0.06) }
-    .peer-name { font-size:13px; font-weight:700 }
-    .peer-status { font-size:12px; color:#666; margin-top:6px }
-    .tips { margin-top:10px; font-size:12px; color:#444 }
-    .card.small { padding:12px }`;
-    const style = document.createElement('style');
-    style.dataset.owner = 'talknow-singlefile';
-    style.appendChild(document.createTextNode(css));
-    document.head.appendChild(style);
-    return () => document.head.removeChild(style);
-  }, []);
+const css = `
+:root { font-family: Inter, Arial, sans-serif; }
+html, body, #root { height: 100%; margin: 0; }
+body { background:#f3f4f6; color:#111827; }
+
+
+.app-root { min-height:100vh; box-sizing:border-box; padding:20px; width:100%; display:flex; flex-direction:column; gap:18px; }
+
+
+.header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.header h1 { margin:0; font-size:20px; }
+.sub { font-size:13px; color:#666; white-space:nowrap; }
+
+.layout {
+display:grid;
+grid-template-columns: 1fr 360px;
+gap:16px;
+align-items:start;
+width:200%;
+flex:1;
+transform: translateX(-200px); /* shifted more left */
+}
+@media (max-width:980px) { .layout { grid-template-columns: 1fr; } .sidebar { width:100%; } }
+
+
+.main-card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 6px 18px rgba(20,20,50,0.06); display:flex; flex-direction:column; gap:12px; height:100%; }
+
+
+.controls { display:flex; gap:10px; align-items:center; }
+.btn { padding:8px 12px; border-radius:10px; background:#0b84ff; color:#fff; border:none; cursor:pointer; }
+.btn-ghost { margin-left:8px; background:#eee; color:#333; }
+.status { margin-left:auto; display:flex; gap:8px; align-items:center; }
+
+
+.media-and-chat { display:flex; gap:12px; flex:1; min-height:0; }
+
+
+.media-panel { flex:1; border-radius:10px; overflow:hidden; background:#111827; padding:12px; display:flex; flex-direction:column; gap:12px; min-height:0; }
+
+
+.videos { display:flex; gap:12px; flex: 1 1 auto; min-height:0; }
+
+
+.local, .remote { flex:1; display:flex; flex-direction:column; gap:8px; min-height:0; }
+
+
+.caption { font-size:12px; color:#ddd; margin-bottom:4px; }
+
+
+.video { width:100%; height:100%; border-radius:10px; background:#000; object-fit:cover; display:block; min-height:180px; }
+
+
+.chat-section { width:360px; max-width:360px; display:flex; flex-direction:column; gap:8px; }
+@media (max-width:980px) { .chat-section { width:100%; max-width:100%; } }
+
+
+.chat-header { display:flex; justify-content:space-between; align-items:center; }
+.chat-title { color:#bbb; }
+.btn-report { font-size:12px; padding:6px 10px; border-radius:8px; background:#ffecec; border:1px solid #f5c2c2; }
+
+
+.chat-window { margin-top:8px; height:220px; overflow:auto; padding:10px; background:rgba(255,255,255,0.02); border-radius:8px; }
+.empty { color:#9aa; font-size:13px; }
+
+
+.msg { margin-bottom:8px; }
+.msg .from { font-size:12px; color:#8f8f8f; }
+.msg .bubble { display:inline-block; padding:8px 10px; border-radius:8px; margin-top:4px; max-width:85%; word-wrap:break-word; }
+.msg-out .bubble { background:#d1ffe0; }
+.msg-in .bubble {
+background:#ffffffcc; /* light background */
+.msg-system .bubble { background:#fff3c4; }
+
+
+.chat-input { display:flex; gap:8px; margin-top:8px; }
+.chat-input input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid #ddd; background:#fff; }
+
+
+.sidebar { width:320px; display:flex; flex-direction:column; gap:12px; }
+.card { padding:12px; border-radius:10px; background:#fff; box-shadow:0 6px 18px rgba(20,20,50,0.06); }
+.peer-name { font-size:13px; font-weight:700; }
+.peer-status { font-size:12px; color:#666; margin-top:6px; }
+.tips { margin-top:10px; font-size:12px; color:#444; }
+`;
+const style = document.createElement('style');
+style.dataset.owner = 'talknow-singlefile';
+style.appendChild(document.createTextNode(css));
+document.head.appendChild(style);
+return () => document.head.removeChild(style);
+}, []);
 
   // ----------------- FAKE preview helpers -----------------
   const NAMES = ['Aisha', 'Carlos', 'Priya', 'Omar', 'Lina', 'John', 'Sana', 'Ravi'];
@@ -294,8 +340,8 @@ export default function App() {
 
   function setupDataChannel(dc) {
     dcRef.current = dc;
-    dc.onopen = () => appendSystem('Data channel open');
-    dc.onmessage = (e) => appendMessage({ id: Date.now(), from: 'Peer', text: e.data });
+    dc.onopen = () => appendSystem('You Can Text Now. Connected To Stranger');
+    dc.onmessage = (e) => appendMessage({ id: Date.now(), from: 'Stranger', text: e.data });
     dc.onclose = () => appendSystem('Data channel closed');
     dc.onerror = (err) => console.warn('DC error', err);
   }
@@ -363,8 +409,8 @@ export default function App() {
   return (
     <div className="app-root">
       <header className="header">
-        <h1>TalkNow — Preview</h1>
-        <div className="sub">Happy And Safe Browsing </div>
+        <h1>TalkNow — Chat With Stranger</h1>
+        <div className="sub">Happy And Safe Chatting </div>
       </header>
 
       <div className="layout">
