@@ -15,6 +15,9 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
 
+  // live online count (from signaling server)
+  const [onlineCount, setOnlineCount] = useState(0);
+
   // DOM & realtime refs
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -33,85 +36,79 @@ export default function App() {
   const fakeFallbackActive = useRef(false);
   const fakeSessionTimerRef = useRef(null);
 
+  // ---------- Analytics helper ----------
+  function trackEvent(action, params = {}) {
+    if (typeof window !== 'undefined' && window.gtag) {
+      try { window.gtag('event', action, params); }
+      catch (e) { console.warn('gtag error', e); }
+    } else {
+      // local dev: optionally log
+      // console.log('[GA event]', action, params);
+    }
+  }
+
   // inject styles once
   useEffect(() => {
-const css = `
+    const css = `
 :root { font-family: Inter, Arial, sans-serif; }
 html, body, #root { height: 100%; margin: 0; }
 body { background:#f3f4f6; color:#111827; }
 
-
 .app-root { min-height:100vh; box-sizing:border-box; padding:20px; width:100%; display:flex; flex-direction:column; gap:18px; }
-
 
 .header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
 .header h1 { margin:0; font-size:20px; }
 .sub { font-size:13px; color:#666; white-space:nowrap; }
 
 .layout {
-display:grid;
-grid-template-columns: 1fr 360px;
-gap:16px;
-align-items:start;
-width:200%;
-flex:1;
-transform: translateX(-200px); /* shifted more left */
+  display:grid;
+  grid-template-columns: 1fr 360px;
+  gap:16px;
+  align-items:start;
+  width:200%;
+  flex:1;
+  transform: translateX(-200px); /* shifted more left */
 }
 @media (max-width:980px) { .layout { grid-template-columns: 1fr; } .sidebar { width:100%; } }
 
-
 .main-card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 6px 18px rgba(20,20,50,0.06); display:flex; flex-direction:column; gap:12px; height:100%; }
-
 
 .controls { display:flex; gap:10px; align-items:center; }
 .btn { padding:8px 12px; border-radius:10px; background:#0b84ff; color:#fff; border:none; cursor:pointer; }
 .btn-ghost { margin-left:8px; background:#eee; color:#333; }
 .status { margin-left:auto; display:flex; gap:8px; align-items:center; }
 
-
 .media-and-chat { display:flex; gap:12px; flex:1; min-height:0; }
-
 
 .media-panel { flex:1; border-radius:10px; overflow:hidden; background:#111827; padding:12px; display:flex; flex-direction:column; gap:12px; min-height:0; }
 
-
 .videos { display:flex; gap:12px; flex: 1 1 auto; min-height:0; }
-
 
 .local, .remote { flex:1; display:flex; flex-direction:column; gap:8px; min-height:0; }
 
-
 .caption { font-size:12px; color:#ddd; margin-bottom:4px; }
-
 
 .video { width:100%; height:100%; border-radius:10px; background:#000; object-fit:cover; display:block; min-height:180px; }
 
-
 .chat-section { width:360px; max-width:360px; display:flex; flex-direction:column; gap:8px; }
 @media (max-width:980px) { .chat-section { width:100%; max-width:100%; } }
-
 
 .chat-header { display:flex; justify-content:space-between; align-items:center; }
 .chat-title { color:#bbb; }
 .btn-report { font-size:12px; padding:6px 10px; border-radius:8px; background:#ffecec; border:1px solid #f5c2c2; }
 
-
 .chat-window { margin-top:8px; height:220px; overflow:auto; padding:10px; background:rgba(255,255,255,0.02); border-radius:8px; }
 .empty { color:#9aa; font-size:13px; }
-
 
 .msg { margin-bottom:8px; }
 .msg .from { font-size:12px; color:#8f8f8f; }
 .msg .bubble { display:inline-block; padding:8px 10px; border-radius:8px; margin-top:4px; max-width:85%; word-wrap:break-word; }
 .msg-out .bubble { background:#d1ffe0; }
-.msg-in .bubble {
-background:#ffffffcc; /* light background */
+.msg-in .bubble { background:#ffffffcc; } /* light background */
 .msg-system .bubble { background:#fff3c4; }
-
 
 .chat-input { display:flex; gap:8px; margin-top:8px; }
 .chat-input input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid #ddd; background:#fff; }
-
 
 .sidebar { width:320px; display:flex; flex-direction:column; gap:12px; }
 .card { padding:12px; border-radius:10px; background:#fff; box-shadow:0 6px 18px rgba(20,20,50,0.06); }
@@ -119,12 +116,12 @@ background:#ffffffcc; /* light background */
 .peer-status { font-size:12px; color:#666; margin-top:6px; }
 .tips { margin-top:10px; font-size:12px; color:#444; }
 `;
-const style = document.createElement('style');
-style.dataset.owner = 'talknow-singlefile';
-style.appendChild(document.createTextNode(css));
-document.head.appendChild(style);
-return () => document.head.removeChild(style);
-}, []);
+    const style = document.createElement('style');
+    style.dataset.owner = 'talknow-singlefile';
+    style.appendChild(document.createTextNode(css));
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
 
   // ----------------- FAKE preview helpers -----------------
   const NAMES = ['Aisha', 'Carlos', 'Priya', 'Omar', 'Lina', 'John', 'Sana', 'Ravi'];
@@ -166,6 +163,17 @@ return () => document.head.removeChild(style);
     socket.on('connect', () => {
       selfIdRef.current = socket.id;
       console.log('[socket] connected', socket.id);
+
+      // optional presence ping
+      socket.emit('presence', { ts: Date.now() });
+
+      // track that client made a socket connection (GA)
+      trackEvent('client_socket_connect', { socket_id: socket.id });
+    });
+
+    // server will emit 'online' with the current number of connected clients
+    socket.on('online', (count) => {
+      setOnlineCount(typeof count === 'number' ? count : 0);
     });
 
     socket.on('matched', ({ matchId, peer }) => {
@@ -210,6 +218,7 @@ return () => document.head.removeChild(style);
 
     return () => {
       if (socketRef.current) socketRef.current.disconnect();
+      setOnlineCount(0);
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
       if (fakeSessionTimerRef.current) clearTimeout(fakeSessionTimerRef.current);
     };
@@ -285,76 +294,136 @@ return () => document.head.removeChild(style);
   }
 
   async function startWebRTC(isInitiator) {
-  // create PC
-  pcRef.current = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    // add TURN servers here for real-world NAT traversal
-  });
-  const pc = pcRef.current;
+    // create PC
+    pcRef.current = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      // add TURN servers here for real-world NAT traversal
+    });
+    const pc = pcRef.current;
 
-  // setup remote stream
-  remoteStreamRef.current = new MediaStream();
-  if (remoteVideoRef.current) {
-    remoteVideoRef.current.srcObject = remoteStreamRef.current;
-    // try to play (mobile may block until user gesture)
-    remoteVideoRef.current.play().catch(() => {});
-  }
+    // setup remote stream
+    remoteStreamRef.current = new MediaStream();
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      // try to play (mobile may block until user gesture)
+      remoteVideoRef.current.play().catch(() => {});
+    }
 
-  pc.ontrack = (e) => {
-    // prefer attached streams (some browsers provide e.streams[0])
-    if (e.streams && e.streams[0]) {
-      e.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
+    pc.ontrack = (e) => {
+      // prefer attached streams (some browsers provide e.streams[0])
+      if (e.streams && e.streams[0]) {
+        e.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
+      } else {
+        // fallback: individual track(s)
+        remoteStreamRef.current.addTrack(e.track);
+      }
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate && peerIdRef.current && socketRef.current && socketRef.current.connected) {
+        socketRef.current.emit('sig', { to: peerIdRef.current, type: 'ice', data: e.candidate });
+      }
+    };
+
+    // data channel logic
+    if (isInitiator) {
+      const dc = pc.createDataChannel('chat');
+      setupDataChannel(dc);
     } else {
-      // fallback: individual track(s)
-      remoteStreamRef.current.addTrack(e.track);
-    }
-  };
-
-  pc.onicecandidate = (e) => {
-    if (e.candidate && peerIdRef.current && socketRef.current && socketRef.current.connected) {
-      socketRef.current.emit('sig', { to: peerIdRef.current, type: 'ice', data: e.candidate });
-    }
-  };
-
-  // data channel logic
-  if (isInitiator) {
-    const dc = pc.createDataChannel('chat');
-    setupDataChannel(dc);
-  } else {
-    pc.ondatachannel = (e) => setupDataChannel(e.channel);
-  }
-
-  // Optional: connection state logging (helps debug mobile)
-  pc.onconnectionstatechange = () => {
-    console.log('[pc] connectionState=', pc.connectionState);
-    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-      appendSystem('Connection lost.'); // user-facing
-    }
-  };
-
-  // ✅ Check available devices FIRST
-  try {
-    const devices = await navigator.mediaDevices.enumerateDevices();
-    const hasVideo = devices.some(d => d.kind === 'videoinput');
-    const hasAudio = devices.some(d => d.kind === 'audioinput');
-
-    console.log('🎥 Camera available:', hasVideo);
-    console.log('🎤 Microphone available:', hasAudio);
-
-    // Build constraints based on what's available
-    const constraints = {};
-    if (hasAudio) constraints.audio = true;
-    if (hasVideo) {
-      // prefer front camera on phones
-      constraints.video = { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
+      pc.ondatachannel = (e) => setupDataChannel(e.channel);
     }
 
-    // If neither available, show message but continue with text chat
-    if (!hasAudio && !hasVideo) {
-      appendSystem('⚠️ No camera/mic found. Text chat only.');
-      console.warn('No media devices available');
+    // Optional: connection state logging (helps debug mobile)
+    pc.onconnectionstatechange = () => {
+      console.log('[pc] connectionState=', pc.connectionState);
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        appendSystem('Connection lost.'); // user-facing
+      }
+    };
 
-      // create offer for datachannel-only (if initiator)
+    // ✅ Check available devices FIRST
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const hasVideo = devices.some(d => d.kind === 'videoinput');
+      const hasAudio = devices.some(d => d.kind === 'audioinput');
+
+      console.log('🎥 Camera available:', hasVideo);
+      console.log('🎤 Microphone available:', hasAudio);
+
+      // Build constraints based on what's available
+      const constraints = {};
+      if (hasAudio) constraints.audio = true;
+      if (hasVideo) {
+        // prefer front camera on phones
+        constraints.video = { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
+      }
+
+      // If neither available, show message but continue with text chat
+      if (!hasAudio && !hasVideo) {
+        appendSystem('⚠️ No camera/mic found. Text chat only.');
+        console.warn('No media devices available');
+
+        // create offer for datachannel-only (if initiator)
+        if (isInitiator) {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          if (socketRef.current && peerIdRef.current) {
+            socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
+          }
+        }
+        setState('connected');
+        return;
+      }
+
+      // Try to get media with available devices
+      localStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+      localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
+
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+        localVideoRef.current.play().catch(() => { /* autoplay may be blocked; okay */ });
+      }
+
+      // Show what mode we're in
+      if (hasAudio && !hasVideo) {
+        appendSystem('🎤 Audio-only mode (no camera detected)');
+      } else if (hasVideo && !hasAudio) {
+        appendSystem('🎥 Video-only mode (no microphone detected)');
+      } else {
+        appendSystem('✅ Video & audio connected');
+      }
+
+    } catch (e) {
+      console.warn('getUserMedia failed', e);
+
+      // Better error messages
+      if (e && e.name === 'NotFoundError') {
+        appendSystem('❌ Camera/mic not found. Continuing with text chat only.');
+      } else if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
+        appendSystem('🔒 Permission denied. Click camera icon in address bar to allow access.');
+      } else if (e && e.name === 'NotReadableError') {
+        appendSystem('⚠️ Device in use by another app. Close other apps and try again.');
+      } else {
+        appendSystem('⚠️ Media error. Text chat still works.');
+      }
+      // proceed — create offer for datachannel only if initiator
+      if (isInitiator) {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          if (socketRef.current && peerIdRef.current) {
+            socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
+          }
+        } catch (err) {
+          console.warn('Failed to create/send offer after media error', err);
+        }
+      }
+      setState('connected');
+      return;
+    }
+
+    // create offer if initiator
+    try {
       if (isInitiator) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -362,77 +431,19 @@ return () => document.head.removeChild(style);
           socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
         }
       }
-      setState('connected');
-      return;
+    } catch (err) {
+      console.warn('Error creating/sending offer', err);
     }
 
-    // Try to get media with available devices
-    localStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-    localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
-
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = localStreamRef.current;
-      localVideoRef.current.play().catch(() => { /* autoplay may be blocked; okay */ });
-    }
-
-    // Show what mode we're in
-    if (hasAudio && !hasVideo) {
-      appendSystem('🎤 Audio-only mode (no camera detected)');
-    } else if (hasVideo && !hasAudio) {
-      appendSystem('🎥 Video-only mode (no microphone detected)');
-    } else {
-      appendSystem('✅ Video & audio connected');
-    }
-
-  } catch (e) {
-    console.warn('getUserMedia failed', e);
-
-    // Better error messages
-    if (e && e.name === 'NotFoundError') {
-      appendSystem('❌ Camera/mic not found. Continuing with text chat only.');
-    } else if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
-      appendSystem('🔒 Permission denied. Click camera icon in address bar to allow access.');
-    } else if (e && e.name === 'NotReadableError') {
-      appendSystem('⚠️ Device in use by another app. Close other apps and try again.');
-    } else {
-      appendSystem('⚠️ Media error. Text chat still works.');
-    }
-    // proceed — create offer for datachannel only if initiator
-    if (isInitiator) {
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        if (socketRef.current && peerIdRef.current) {
-          socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
-        }
-      } catch (err) {
-        console.warn('Failed to create/send offer after media error', err);
-      }
-    }
     setState('connected');
-    return;
   }
-
-  // create offer if initiator
-  try {
-    if (isInitiator) {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      if (socketRef.current && peerIdRef.current) {
-        socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
-      }
-    }
-  } catch (err) {
-    console.warn('Error creating/sending offer', err);
-  }
-
-  setState('connected');
-}
-
 
   function setupDataChannel(dc) {
     dcRef.current = dc;
-    dc.onopen = () => appendSystem('You Can Text Now. Connected To Stranger');
+    dc.onopen = () => {
+      appendSystem('You Can Text Now. Connected To Stranger');
+      trackEvent('chat_connected', { peer: matchName || null });
+    };
     dc.onmessage = (e) => appendMessage({ id: Date.now(), from: 'Stranger', text: e.data });
     dc.onclose = () => appendSystem('Stranger disconnect, Click Start');
     dc.onerror = (err) => console.warn('DC error', err);
@@ -447,6 +458,9 @@ return () => document.head.removeChild(style);
     if (!input.trim()) return;
     const outgoing = { id: Date.now(), from: 'You', text: input.trim() };
     appendMessage(outgoing);
+
+    // track message event
+    trackEvent('message_sent', { text_length: outgoing.text.length });
 
     if (dcRef.current && dcRef.current.readyState === 'open' && peerIdRef.current) {
       try { dcRef.current.send(outgoing.text); } catch (e) { console.warn('dc send failed', e); }
@@ -465,6 +479,9 @@ return () => document.head.removeChild(style);
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit('cancel');
     }
+    // track stop event
+    trackEvent('chat_stop', { reason: 'manual' });
+
     cleanupConnection();
     cleanupFakePreview();
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
@@ -487,11 +504,13 @@ return () => document.head.removeChild(style);
   // --- UI handlers
   function onStart() {
     setMessages([]);
+    trackEvent('chat_start', { method: 'start_button' });
     startSignalling(); // always attempt real first
   }
 
   // --- Handle Report (fixed name and safe)
   function handleReport() {
+    trackEvent('report_submitted', { peer: matchName || null });
     appendSystem('Report submitted — thank you.');
     // TODO: send to /api/report in real app
     stop();
@@ -502,7 +521,14 @@ return () => document.head.removeChild(style);
     <div className="app-root">
       <header className="header">
         <h1>TalkNow — Chat With Stranger</h1>
-        <div className="sub">Happy And Safe Chatting </div>
+
+        <div style={{display:'flex', alignItems:'center', gap:12}}>
+          <div className="sub">Happy And Safe Chatting</div>
+          <div style={{fontSize:13, color:'#0b84ff', fontWeight:700, display:'flex', alignItems:'center', gap:8}}>
+            <span style={{width:10, height:10, borderRadius:999, background:'#22c55e', display:'inline-block'}} />
+            <span>{onlineCount} online</span>
+          </div>
+        </div>
       </header>
 
       <div className="layout">
