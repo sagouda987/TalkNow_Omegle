@@ -1,12 +1,10 @@
 // src/App.jsx
-// TalkNow — automatic Real matchmaking with fallback fake preview
-// Requirements: `npm install socket.io-client` in client folder
-// SIGNAL_URL should point to your signalling server (default: http://localhost:4000)
-
+// TalkNow — React + Socket.IO + WebRTC (with simulated online badge + moderation, terms & 18+)
 import React, { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
 const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || 'http://localhost:4000';
+const LOCAL_PENALTIES_KEY = 'talknow_penalties_v1';
 
 export default function App() {
   // --- app state
@@ -15,8 +13,14 @@ export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
 
-  // live online count (from signaling server)
+  // agreement & age
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [ageVerified, setAgeVerified] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+
+  // online badge (real or simulated)
   const [onlineCount, setOnlineCount] = useState(0);
+  const [simulatedBadge, setSimulatedBadge] = useState(false);
 
   // DOM & realtime refs
   const localVideoRef = useRef(null);
@@ -30,91 +34,267 @@ export default function App() {
   const peerIdRef = useRef(null);
   const selfIdRef = useRef(null);
 
-  // fallback / fake-preview helpers when real matchmaking takes too long
+  // fake-preview helpers
   const fallbackTimerRef = useRef(null);
-  const fakePreviewRef = useRef({}); // { local: {interval,stream}, remote: {interval,stream} }
+  const fakePreviewRef = useRef({});
   const fakeFallbackActive = useRef(false);
   const fakeSessionTimerRef = useRef(null);
+
+  // simulation refs
+  const simRef = useRef(null);
+  const simActiveRef = useRef(false);
+
+  // moderation / penalties
+  const penaltiesRef = useRef(loadPenalties()); // { [userId]: {count, banned, suspendedUntil, reports:[] } }
 
   // ---------- Analytics helper ----------
   function trackEvent(action, params = {}) {
     if (typeof window !== 'undefined' && window.gtag) {
       try { window.gtag('event', action, params); }
       catch (e) { console.warn('gtag error', e); }
-    } else {
-      // local dev: optionally log
-      // console.log('[GA event]', action, params);
     }
   }
 
-  // inject styles once
+  // ---------- Simulation params (tweak here) ----------
+  const DEMO_FORCE = true;   // true => show simulated online badge if real count missing
+  const minDemo = 80;
+  const maxDemo = 320;
+  const intervalMs = 2200;
+
+  // ---------- Moderation settings ----------
+  const TEMP_SUSPENSION_MINUTES = 10; // second offense => suspend for 10 min
+  const BAD_WORDS = ['fuck','shit','bitch','asshole','cunt','porn','nude']; // simple demo list
+  const URL_PATTERN = /(https?:\/\/[^\s]+)/i;
+  const IMAGE_EXT_PATTERN = /\.(jpeg|jpg|png|gif|webp|bmp)(\?.*)?$/i;
+
+  // ---------- helpers for penalties persistence ----------
+  function loadPenalties() {
+    try {
+      const raw = localStorage.getItem(LOCAL_PENALTIES_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      console.warn('Failed to load penalties', e);
+      return {};
+    }
+  }
+  function savePenalties() {
+    try {
+      localStorage.setItem(LOCAL_PENALTIES_KEY, JSON.stringify(penaltiesRef.current));
+    } catch (e) { console.warn('save penalties failed', e); }
+  }
+
+  function recordReport(offenderId, reportData) {
+    if (!offenderId) return;
+    const p = penaltiesRef.current[offenderId] || { count: 0, banned: false, suspendedUntil: null, reports: [] };
+    p.reports = p.reports || [];
+    p.reports.push({ ts: Date.now(), ...reportData });
+    penaltiesRef.current[offenderId] = p;
+    savePenalties();
+  }
+
+  // ---- moderation function (client-side demo)
+  // returns { allowed: bool, action: 'warn'|'suspend'|'ban'|'block'|null, reason: string }
+  function moderateText(text) {
+    if (!text || !text.trim()) return { allowed: true };
+
+    const lower = text.toLowerCase();
+
+    // block URLs / images
+    const hasUrl = URL_PATTERN.test(text);
+    if (hasUrl) {
+      const m = text.match(URL_PATTERN);
+      if (m && IMAGE_EXT_PATTERN.test(m[0])) {
+        return { allowed: false, action: 'block', reason: 'Images not allowed in chat' };
+      }
+      return { allowed: false, action: 'block', reason: 'Links are not allowed in chat' };
+    }
+
+    // bad words check
+    for (let w of BAD_WORDS) {
+      if (lower.includes(w)) {
+        return { allowed: false, action: 'warn', reason: `Prohibited language detected: ${w}` };
+      }
+    }
+
+    return { allowed: true };
+  }
+
+  // Called when we detect misconduct for a given offender (peerId)
+  function applyPenaltyTo(offenderId, reason, reporter = 'system') {
+    if (!offenderId) return;
+    const now = Date.now();
+    const entry = penaltiesRef.current[offenderId] || { count: 0, banned: false, suspendedUntil: null, reports: [] };
+
+    // increment offense count
+    entry.count = (entry.count || 0) + 1;
+    entry.reports = entry.reports || [];
+    entry.reports.push({ ts: now, reason, reporter });
+
+    // escalate
+    if (entry.count === 1) {
+      appendSystem(`Warning issued to user (${offenderId}). Reason: ${reason}`);
+      trackEvent('moderation_warning', { offender: offenderId, reason });
+    } else if (entry.count === 2) {
+      entry.suspendedUntil = now + TEMP_SUSPENSION_MINUTES * 60 * 1000;
+      appendSystem(`User (${offenderId}) suspended for ${TEMP_SUSPENSION_MINUTES} minutes.`);
+      trackEvent('moderation_suspension', { offender: offenderId, duration_min: TEMP_SUSPENSION_MINUTES, reason });
+    } else {
+      entry.banned = true;
+      appendSystem(`User (${offenderId}) permanently banned (client-side demo).`);
+      trackEvent('moderation_ban', { offender: offenderId, reason });
+    }
+
+    penaltiesRef.current[offenderId] = entry;
+    savePenalties();
+  }
+
+  function isPeerAllowed(peerId) {
+    if (!peerId) return true;
+    const e = penaltiesRef.current[peerId];
+    if (!e) return true;
+    if (e.banned) return false;
+    if (e.suspendedUntil && Date.now() < e.suspendedUntil) return false;
+    return true;
+  }
+
+  // append messages helpers
+  function appendMessage(msg) { setMessages(m => [...m, msg]); }
+  function appendSystem(text) { setMessages(m => [...m, { id: Date.now(), from: 'System', text }]); }
+
+  // ------- simulated online
+  function startSimulatedOnline(initial) {
+    if (simActiveRef.current) return;
+    simActiveRef.current = true;
+    setSimulatedBadge(true);
+
+    let current = typeof initial === 'number' ? initial : Math.floor((minDemo + maxDemo) / 2);
+    setOnlineCount(current);
+
+    simRef.current = setInterval(() => {
+      const delta = Math.floor((Math.random() - 0.5) * 16);
+      current = Math.max(minDemo, Math.min(maxDemo, current + delta));
+      if (Math.random() < 0.05) {
+        const big = Math.floor((Math.random() - 0.5) * 60);
+        current = Math.max(minDemo, Math.min(maxDemo, current + big));
+      }
+      setOnlineCount(current);
+    }, intervalMs);
+  }
+  function stopSimulatedOnline() {
+    if (simRef.current) { clearInterval(simRef.current); simRef.current = null; }
+    simActiveRef.current = false;
+    setSimulatedBadge(false);
+  }
+
+  // inject styles once (responsive + side-by-side chat)
   useEffect(() => {
     const css = `
 :root { font-family: Inter, Arial, sans-serif; }
 html, body, #root { height: 100%; margin: 0; }
-body { background:#f3f4f6; color:#111827; }
+body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
 
-.app-root { min-height:100vh; box-sizing:border-box; padding:20px; width:100%; display:flex; flex-direction:column; gap:18px; }
+.app-root { min-height:100vh; box-sizing:border-box; padding:18px; width:100%; display:flex; flex-direction:column; gap:16px; }
 
-.header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
-.header h1 { margin:0; font-size:20px; }
+/* header */
+.header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+.header h1 { margin:0; font-size:20px; white-space:nowrap; }
 .sub { font-size:13px; color:#666; white-space:nowrap; }
 
+/* layout: main + sidebar */
 .layout {
   display:grid;
-  grid-template-columns: 1fr 360px;
+  grid-template-columns: 1fr 320px;
   gap:16px;
   align-items:start;
-  width:200%;
-  flex:1;
-  transform: translateX(-200px); /* shifted more left */
+  width:100%;
+  box-sizing:border-box;
+  min-height: calc(100vh - 120px);
+  padding-bottom:8px;
 }
-@media (max-width:980px) { .layout { grid-template-columns: 1fr; } .sidebar { width:100%; } }
 
-.main-card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 6px 18px rgba(20,20,50,0.06); display:flex; flex-direction:column; gap:12px; height:100%; }
+/* main card */
+.main-card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 6px 18px rgba(20,20,50,0.06); display:flex; flex-direction:column; gap:12px; min-height:0; }
 
-.controls { display:flex; gap:10px; align-items:center; }
-.btn { padding:8px 12px; border-radius:10px; background:#0b84ff; color:#fff; border:none; cursor:pointer; }
+/* controls */
+.controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.btn { padding:8px 12px; border-radius:10px; background:#0b84ff; color:#fff; border:none; cursor:pointer; font-weight:600; }
 .btn-ghost { margin-left:8px; background:#eee; color:#333; }
 .status { margin-left:auto; display:flex; gap:8px; align-items:center; }
 
-.media-and-chat { display:flex; gap:12px; flex:1; min-height:0; }
+/* media + chat container: we keep media-panel as container that lays out videos and chat side-by-side */
+.media-and-chat { display:flex; gap:12px; flex-direction:column; min-height:0; }
 
-.media-panel { flex:1; border-radius:10px; overflow:hidden; background:#111827; padding:12px; display:flex; flex-direction:column; gap:12px; min-height:0; }
+/* media panel contains videos and chat as two columns on desktop */
+.media-panel {
+  width:100%;
+  border-radius:10px;
+  overflow:hidden;
+  background:#111827;
+  padding:12px;
+  display:flex;
+  flex-direction:row; /* <-- changed: side-by-side by default */
+  gap:12px;
+  min-height:0;
+  box-sizing:border-box;
+}
 
-.videos { display:flex; gap:12px; flex: 1 1 auto; min-height:0; }
+/* videos area (left column) */
+.videos { display:flex; flex-direction:column; gap:12px; flex:1 1 auto; min-width:0; }
 
-.local, .remote { flex:1; display:flex; flex-direction:column; gap:8px; min-height:0; }
-
+/* keep each video responsive */
+.local, .remote { display:flex; flex-direction:column; gap:8px; min-height:0; }
 .caption { font-size:12px; color:#ddd; margin-bottom:4px; }
+.video { width:100%; height:260px; border-radius:10px; background:#000; object-fit:cover; display:block; min-height:120px; }
 
-.video { width:100%; height:100%; border-radius:10px; background:#000; object-fit:cover; display:block; min-height:180px; }
+/* chat section (right column) */
+.chat-section { width:360px; max-width:100%; display:flex; flex-direction:column; gap:8px; box-sizing:border-box; }
 
-.chat-section { width:360px; max-width:360px; display:flex; flex-direction:column; gap:8px; }
-@media (max-width:980px) { .chat-section { width:100%; max-width:100%; } }
-
+/* chat header / window / input */
 .chat-header { display:flex; justify-content:space-between; align-items:center; }
 .chat-title { color:#bbb; }
 .btn-report { font-size:12px; padding:6px 10px; border-radius:8px; background:#ffecec; border:1px solid #f5c2c2; }
-
-.chat-window { margin-top:8px; height:220px; overflow:auto; padding:10px; background:rgba(255,255,255,0.02); border-radius:8px; }
+.chat-window { margin-top:8px; height:320px; overflow:auto; padding:10px; background:rgba(255,255,255,0.02); border-radius:8px; }
 .empty { color:#9aa; font-size:13px; }
-
 .msg { margin-bottom:8px; }
 .msg .from { font-size:12px; color:#8f8f8f; }
 .msg .bubble { display:inline-block; padding:8px 10px; border-radius:8px; margin-top:4px; max-width:85%; word-wrap:break-word; }
 .msg-out .bubble { background:#d1ffe0; }
-.msg-in .bubble { background:#ffffffcc; } /* light background */
+.msg-in .bubble { background:#ffffffcc; }
 .msg-system .bubble { background:#fff3c4; }
-
 .chat-input { display:flex; gap:8px; margin-top:8px; }
 .chat-input input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid #ddd; background:#fff; }
 
-.sidebar { width:320px; display:flex; flex-direction:column; gap:12px; }
+/* sidebar card */
+.sidebar { width:100%; max-width:320px; display:flex; flex-direction:column; gap:12px; box-sizing:border-box; }
 .card { padding:12px; border-radius:10px; background:#fff; box-shadow:0 6px 18px rgba(20,20,50,0.06); }
 .peer-name { font-size:13px; font-weight:700; }
 .peer-status { font-size:12px; color:#666; margin-top:6px; }
 .tips { margin-top:10px; font-size:12px; color:#444; }
+
+/* responsive tweaks */
+/* when smaller than 1100px, stack chat under videos */
+@media (max-width:1100px) {
+  .media-panel { flex-direction:column; }
+  .videos { flex-direction:column; }
+  .video { height:240px; }
+  .chat-section { width:100%; max-width:100%; }
+}
+
+/* mobile */
+@media (max-width:680px) {
+  .header h1 { font-size:18px; }
+  .controls { gap:8px; }
+  .video { height:200px; }
+  .chat-window { height:220px; }
+  .chat-input input { padding:10px; }
+  .btn { padding:8px 10px; font-size:14px; }
+  .layout { padding-bottom:20px; }
+}
+
+/* small polish */
+@media (prefers-reduced-motion: reduce) {
+  * { transition:none !important; animation:none !important; }
+}
 `;
     const style = document.createElement('style');
     style.dataset.owner = 'talknow-singlefile';
@@ -125,7 +305,6 @@ body { background:#f3f4f6; color:#111827; }
 
   // ----------------- FAKE preview helpers -----------------
   const NAMES = ['Aisha', 'Carlos', 'Priya', 'Omar', 'Lina', 'John', 'Sana', 'Ravi'];
-
   function createCanvasStream(el, label) {
     const c = document.createElement('canvas'); c.width = 320; c.height = 240;
     const ctx = c.getContext('2d'); let t = 0;
@@ -156,29 +335,31 @@ body { background:#f3f4f6; color:#111827; }
 
   // ----------------- REAL mode (socket + WebRTC) -----------------
   useEffect(() => {
-    // prepare socket (not auto connecting)
     socketRef.current = io(SIGNAL_URL, { autoConnect: false });
     const socket = socketRef.current;
 
     socket.on('connect', () => {
       selfIdRef.current = socket.id;
       console.log('[socket] connected', socket.id);
-
-      // optional presence ping
       socket.emit('presence', { ts: Date.now() });
-
-      // track that client made a socket connection (GA)
       trackEvent('client_socket_connect', { socket_id: socket.id });
+
+      setTimeout(() => {
+        if (DEMO_FORCE && !simActiveRef.current && (!socket || !socket.connected || onlineCount === 0)) {
+          startSimulatedOnline();
+        }
+      }, 1200);
     });
 
-    // server will emit 'online' with the current number of connected clients
     socket.on('online', (count) => {
-      setOnlineCount(typeof count === 'number' ? count : 0);
+      if (typeof count === 'number' && Number.isFinite(count)) {
+        stopSimulatedOnline();
+        setOnlineCount(count);
+      }
     });
 
     socket.on('matched', ({ matchId, peer }) => {
       console.log('[socket] matched', peer);
-      // if fake preview active, cleanup before real connect
       if (fakeFallbackActive.current) cleanupFakePreview();
       peerIdRef.current = peer;
       setMatchName(peer);
@@ -213,110 +394,108 @@ body { background:#f3f4f6; color:#111827; }
       appendSystem('Peer disconnected');
       cleanupConnection();
       setState('idle');
-      // restart searching automatically if desired (here we leave idle)
+    });
+
+    socket.on('moderation', ({ offender, action, reason }) => {
+      if (action === 'ban') {
+        penaltiesRef.current[offender] = penaltiesRef.current[offender] || {};
+        penaltiesRef.current[offender].banned = true;
+        savePenalties();
+        appendSystem(`User ${offender} banned by server moderation`);
+      }
+    });
+
+    socket.on('disconnect', () => {
+      console.log('[socket] disconnected');
+      if (DEMO_FORCE) startSimulatedOnline();
     });
 
     return () => {
       if (socketRef.current) socketRef.current.disconnect();
-      setOnlineCount(0);
+      stopSimulatedOnline();
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
       if (fakeSessionTimerRef.current) clearTimeout(fakeSessionTimerRef.current);
     };
-    // run once
   }, []);
 
   async function startSignalling() {
+    // enforce terms & age before joining
+    if (!ageVerified || !acceptedTerms) {
+      setShowTermsModal(true);
+      appendSystem('You must confirm age (18+) and accept Terms & Conditions before joining.');
+      return;
+    }
+
+    // check local ban
+    const myId = selfIdRef.current;
+    if (myId && penaltiesRef.current[myId] && penaltiesRef.current[myId].banned) {
+      appendSystem('You are banned and cannot join chats.');
+      return;
+    }
+
     if (!socketRef.current) return;
     if (!socketRef.current.connected) socketRef.current.connect();
     socketRef.current.emit('find');
     setState('searching');
 
-    // clear previous fallback
     fakeFallbackActive.current = false;
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
 
-    // start fallback timer — 5s
     fallbackTimerRef.current = setTimeout(() => {
-      // only trigger if still searching and no peer matched
-      if (state === 'searching' && !peerIdRef.current) {
-        startFakePreviewDuringReal();
-      }
+      if (state === 'searching' && !peerIdRef.current) startFakePreviewDuringReal();
     }, 5000);
   }
 
-  // start a short fake preview while real matchmaking continues in background
   function startFakePreviewDuringReal() {
     fakeFallbackActive.current = true;
     const name = NAMES[Math.floor(Math.random() * NAMES.length)];
     setMatchName(name);
     setState('matched');
 
-    // create canvas streams for local & remote preview (stored so we can cleanup later)
     try {
       const localEl = localVideoRef.current;
       const remoteEl = remoteVideoRef.current;
-      if (localEl) {
-        const r = createCanvasStream(localEl, 'You');
-        fakePreviewRef.current.local = r;
-      }
-      if (remoteEl) {
-        const r2 = createCanvasStream(remoteEl, 'Peer');
-        fakePreviewRef.current.remote = r2;
-      }
+      if (localEl) fakePreviewRef.current.local = createCanvasStream(localEl, 'You');
+      if (remoteEl) fakePreviewRef.current.remote = createCanvasStream(remoteEl, 'Peer');
     } catch (e) { console.warn('fake preview failed', e); }
 
-    // auto-transition to connected UI state quickly
-    setTimeout(() => {
-      if (fakeFallbackActive.current) setState('connected');
-    }, 700);
+    setTimeout(() => { if (fakeFallbackActive.current) setState('connected'); }, 700);
 
-    // schedule end of this short fake session (8s) then try real matching again
     if (fakeSessionTimerRef.current) clearTimeout(fakeSessionTimerRef.current);
     fakeSessionTimerRef.current = setTimeout(() => {
       if (!peerIdRef.current) {
         cleanupFakePreview();
-        // restart searching again (re-arms the 5s fallback)
         startSignalling();
       }
     }, 8000);
   }
 
-  // cleanup fake preview streams (called when real match arrives or user stops)
   function cleanupFakePreview() {
     fakeFallbackActive.current = false;
     const f = fakePreviewRef.current || {};
     try {
       if (f.local) { clearInterval(f.local.interval); f.local.stream.getTracks().forEach(t => t.stop()); }
       if (f.remote) { clearInterval(f.remote.interval); f.remote.stream.getTracks().forEach(t => t.stop()); }
-    } catch (e) { /* ignore */ }
+    } catch (e) {}
     fakePreviewRef.current = {};
     if (fakeSessionTimerRef.current) { clearTimeout(fakeSessionTimerRef.current); fakeSessionTimerRef.current = null; }
   }
 
   async function startWebRTC(isInitiator) {
-    // create PC
     pcRef.current = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      // add TURN servers here for real-world NAT traversal
     });
     const pc = pcRef.current;
 
-    // setup remote stream
     remoteStreamRef.current = new MediaStream();
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStreamRef.current;
-      // try to play (mobile may block until user gesture)
-      remoteVideoRef.current.play().catch(() => {});
+      remoteVideoRef.current.play().catch(()=>{});
     }
 
     pc.ontrack = (e) => {
-      // prefer attached streams (some browsers provide e.streams[0])
-      if (e.streams && e.streams[0]) {
-        e.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
-      } else {
-        // fallback: individual track(s)
-        remoteStreamRef.current.addTrack(e.track);
-      }
+      if (e.streams && e.streams[0]) e.streams[0].getTracks().forEach(t => remoteStreamRef.current.addTrack(t));
+      else remoteStreamRef.current.addTrack(e.track);
     };
 
     pc.onicecandidate = (e) => {
@@ -325,7 +504,6 @@ body { background:#f3f4f6; color:#111827; }
       }
     };
 
-    // data channel logic
     if (isInitiator) {
       const dc = pc.createDataChannel('chat');
       setupDataChannel(dc);
@@ -333,107 +511,58 @@ body { background:#f3f4f6; color:#111827; }
       pc.ondatachannel = (e) => setupDataChannel(e.channel);
     }
 
-    // Optional: connection state logging (helps debug mobile)
     pc.onconnectionstatechange = () => {
-      console.log('[pc] connectionState=', pc.connectionState);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        appendSystem('Connection lost.'); // user-facing
-      }
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') appendSystem('Connection lost.');
     };
 
-    // ✅ Check available devices FIRST
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       const hasVideo = devices.some(d => d.kind === 'videoinput');
       const hasAudio = devices.some(d => d.kind === 'audioinput');
 
-      console.log('🎥 Camera available:', hasVideo);
-      console.log('🎤 Microphone available:', hasAudio);
-
-      // Build constraints based on what's available
       const constraints = {};
       if (hasAudio) constraints.audio = true;
-      if (hasVideo) {
-        // prefer front camera on phones
-        constraints.video = { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
-      }
+      if (hasVideo) constraints.video = { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
 
-      // If neither available, show message but continue with text chat
       if (!hasAudio && !hasVideo) {
         appendSystem('⚠️ No camera/mic found. Text chat only.');
-        console.warn('No media devices available');
-
-        // create offer for datachannel-only (if initiator)
         if (isInitiator) {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
-          if (socketRef.current && peerIdRef.current) {
-            socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
-          }
+          if (socketRef.current && peerIdRef.current) socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
         }
-        setState('connected');
-        return;
+        setState('connected'); return;
       }
 
-      // Try to get media with available devices
       localStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
-
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = localStreamRef.current;
-        localVideoRef.current.play().catch(() => { /* autoplay may be blocked; okay */ });
-      }
-
-      // Show what mode we're in
-      if (hasAudio && !hasVideo) {
-        appendSystem('🎤 Audio-only mode (no camera detected)');
-      } else if (hasVideo && !hasAudio) {
-        appendSystem('🎥 Video-only mode (no microphone detected)');
-      } else {
-        appendSystem('✅ Video & audio connected');
-      }
-
+      if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
+      if (hasAudio && !hasVideo) appendSystem('🎤 Audio-only mode (no camera detected)');
+      else if (hasVideo && !hasAudio) appendSystem('🎥 Video-only mode (no microphone detected)');
+      else appendSystem('✅ Video & audio connected');
     } catch (e) {
       console.warn('getUserMedia failed', e);
-
-      // Better error messages
-      if (e && e.name === 'NotFoundError') {
-        appendSystem('❌ Camera/mic not found. Continuing with text chat only.');
-      } else if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) {
-        appendSystem('🔒 Permission denied. Click camera icon in address bar to allow access.');
-      } else if (e && e.name === 'NotReadableError') {
-        appendSystem('⚠️ Device in use by another app. Close other apps and try again.');
-      } else {
-        appendSystem('⚠️ Media error. Text chat still works.');
-      }
-      // proceed — create offer for datachannel only if initiator
+      if (e && e.name === 'NotFoundError') appendSystem('❌ Camera/mic not found. Continuing with text chat only.');
+      else if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) appendSystem('🔒 Permission denied.');
+      else appendSystem('⚠️ Media error. Text chat still works.');
       if (isInitiator) {
         try {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
-          if (socketRef.current && peerIdRef.current) {
-            socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
-          }
-        } catch (err) {
-          console.warn('Failed to create/send offer after media error', err);
-        }
+          if (socketRef.current && peerIdRef.current) socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
+        } catch (err) { console.warn(err); }
       }
       setState('connected');
       return;
     }
 
-    // create offer if initiator
     try {
       if (isInitiator) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        if (socketRef.current && peerIdRef.current) {
-          socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
-        }
+        if (socketRef.current && peerIdRef.current) socketRef.current.emit('sig', { to: peerIdRef.current, type: 'offer', data: pc.localDescription });
       }
-    } catch (err) {
-      console.warn('Error creating/sending offer', err);
-    }
+    } catch (err) { console.warn('Error creating/sending offer', err); }
 
     setState('connected');
   }
@@ -444,26 +573,54 @@ body { background:#f3f4f6; color:#111827; }
       appendSystem('You Can Text Now. Connected To Stranger');
       trackEvent('chat_connected', { peer: matchName || null });
     };
-    dc.onmessage = (e) => appendMessage({ id: Date.now(), from: 'Stranger', text: e.data });
+    dc.onmessage = (e) => {
+      const text = String(e.data || '');
+      const peer = peerIdRef.current || 'unknown';
+      const moderation = moderateText(text);
+
+      if (!isPeerAllowed(peer)) {
+        appendSystem('Message blocked: peer is suspended or banned.');
+        return;
+      }
+
+      if (!moderation.allowed) {
+        applyPenaltyTo(peer, moderation.reason, 'auto-moderation');
+        trackEvent('incoming_blocked', { peer, reason: moderation.reason });
+        appendSystem(`Incoming message blocked for policy: ${moderation.reason}`);
+        return;
+      }
+
+      appendMessage({ id: Date.now(), from: 'Stranger', text });
+    };
     dc.onclose = () => appendSystem('Stranger disconnect, Click Start');
     dc.onerror = (err) => console.warn('DC error', err);
   }
 
-  // --- message helpers
-  function appendMessage(msg) { setMessages(m => [...m, msg]); }
-  function appendSystem(text) { setMessages(m => [...m, { id: Date.now(), from: 'System', text }]); }
-
-  // --- send message (real via datachannel, fake via delayed reply)
+  // send message with moderation checks
   function send() {
     if (!input.trim()) return;
+
+    const moderation = moderateText(input);
+    if (!moderation.allowed) {
+      appendSystem(`Your message was blocked: ${moderation.reason}`);
+      const myId = selfIdRef.current || 'local';
+      applyPenaltyTo(myId, `outgoing_${moderation.reason}`, 'self');
+      trackEvent('outgoing_blocked', { reason: moderation.reason });
+      return;
+    }
+
+    const peer = peerIdRef.current;
+    if (peer && !isPeerAllowed(peer)) {
+      appendSystem('Cannot send: peer is suspended or banned.');
+      return;
+    }
+
     const outgoing = { id: Date.now(), from: 'You', text: input.trim() };
     appendMessage(outgoing);
-
-    // track message event
     trackEvent('message_sent', { text_length: outgoing.text.length });
 
     if (dcRef.current && dcRef.current.readyState === 'open' && peerIdRef.current) {
-      try { dcRef.current.send(outgoing.text); } catch (e) { console.warn('dc send failed', e); }
+      try { dcRef.current.send(outgoing.text); } catch (e) { console.warn(e); }
     } else if (fakeFallbackActive.current) {
       setTimeout(() => {
         const reply = { id: Date.now() + 1, from: matchName || 'Peer', text: generatePeerReply(outgoing.text) };
@@ -474,14 +631,23 @@ body { background:#f3f4f6; color:#111827; }
     setInput('');
   }
 
+  // report a specific message
+  function reportMessage(msg) {
+    const offender = (msg.from !== 'You' && msg.from !== 'System') ? peerIdRef.current : selfIdRef.current;
+    recordReport(offender, { message: msg.text, reporter: (selfIdRef.current || 'local'), ts: Date.now() });
+    if (socketRef.current && socketRef.current.connected) {
+      socketRef.current.emit('report', { offender, message: msg.text, reporter: selfIdRef.current || 'local' });
+    }
+    applyPenaltyTo(offender, 'reported_by_user', selfIdRef.current || 'local');
+    appendSystem('Thank you — the message was reported and will be reviewed.');
+  }
+
   // --- stop/cleanup
   async function stop() {
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit('cancel');
     }
-    // track stop event
     trackEvent('chat_stop', { reason: 'manual' });
-
     cleanupConnection();
     cleanupFakePreview();
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
@@ -501,32 +667,64 @@ body { background:#f3f4f6; color:#111827; }
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   }
 
-  // --- UI handlers
-  function onStart() {
-    setMessages([]);
-    trackEvent('chat_start', { method: 'start_button' });
-    startSignalling(); // always attempt real first
+  // UI helper to accept terms and age
+  function acceptAndClose() {
+    if (!ageVerified) { appendSystem('Please confirm you are 18+ to continue.'); return; }
+    if (!acceptedTerms) { appendSystem('Please accept Terms & Conditions to continue.'); return; }
+    setShowTermsModal(false);
   }
 
-  // --- Handle Report (fixed name and safe)
+  // Helper: user clicks the main Report button (global)
   function handleReport() {
-    trackEvent('report_submitted', { peer: matchName || null });
+    const offender = peerIdRef.current;
+    if (!offender) {
+      appendSystem('No connected peer to report.');
+      return;
+    }
+    recordReport(offender, { message: 'Reported via Report button', reporter: selfIdRef.current || 'local', ts: Date.now() });
+    if (socketRef.current && socketRef.current.connected) socketRef.current.emit('report', { offender, reporter: selfIdRef.current || 'local' });
+    applyPenaltyTo(offender, 'reported_via_button', selfIdRef.current || 'local');
     appendSystem('Report submitted — thank you.');
-    // TODO: send to /api/report in real app
     stop();
   }
 
-  // --- UI
+  // small UI: show Terms & Guidelines component
+  function TermsGuidelines() {
+    return (
+      <div style={{ marginTop: 10, fontSize: 13, color: '#444' }}>
+        <strong>Community Guidelines</strong>
+        <ul>
+          <li>Be respectful — no hate, threats, or harassment.</li>
+          <li>No sexual content, nudity, or explicit language.</li>
+          <li>No sharing of personal or contact info.</li>
+          <li>Report abusive users — we will review and act.</li>
+          <li>Must be 18+ to use this site. Violations lead to suspension or ban.</li>
+        </ul>
+        <div style={{ marginTop: 8 }}>
+          <a href="#" onClick={(e)=>{ e.preventDefault(); setShowTermsModal(true); }}>Read full Terms & Conditions</a>
+        </div>
+      </div>
+    );
+  }
+
+  // onStart
+  function onStart() {
+    setMessages([]);
+    trackEvent('chat_start', { method: 'start_button' });
+    startSignalling();
+  }
+
+  // Render
   return (
     <div className="app-root">
       <header className="header">
         <h1>TalkNow — Chat With Stranger</h1>
-
         <div style={{display:'flex', alignItems:'center', gap:12}}>
           <div className="sub">Happy And Safe Chatting</div>
           <div style={{fontSize:13, color:'#0b84ff', fontWeight:700, display:'flex', alignItems:'center', gap:8}}>
             <span style={{width:10, height:10, borderRadius:999, background:'#22c55e', display:'inline-block'}} />
             <span>{onlineCount} online</span>
+            {simulatedBadge && <span style={{fontSize:11, color:'#888', marginLeft:8}}>(simulated)</span>}
           </div>
         </div>
       </header>
@@ -534,13 +732,24 @@ body { background:#f3f4f6; color:#111827; }
       <div className="layout">
         <main className="main-card">
           <div className="controls">
-            <div>
+            <div style={{display:'flex', gap:8, alignItems:'center'}}>
+              <label style={{display:'flex', alignItems:'center', gap:8}}>
+                <input type="checkbox" checked={acceptedTerms} onChange={e => setAcceptedTerms(e.target.checked)} />
+                <span style={{fontSize:13}}>I accept Terms & Conditions</span>
+              </label>
+
+              <label style={{display:'flex', alignItems:'center', gap:8}}>
+                <input type="checkbox" checked={ageVerified} onChange={e => setAgeVerified(e.target.checked)} />
+                <span style={{fontSize:13}}>I confirm I am 18+</span>
+              </label>
+
               <button onClick={onStart} disabled={state === 'searching' || state === 'connected'} className="btn">Start</button>
               <button onClick={stop} disabled={state === 'idle'} className="btn btn-ghost">Stop</button>
             </div>
+
             <div className="status">
               <div className="label">Status:</div>
-              <div className="value">{state}</div>
+              <div className="value" style={{marginLeft:8}}>{state}</div>
             </div>
           </div>
 
@@ -558,17 +767,27 @@ body { background:#f3f4f6; color:#111827; }
               </div>
 
               <div className="chat-section">
-                <div className="chat-header">
-                  <div className="chat-title">Chat</div>
-                  <button onClick={handleReport} className="btn btn-report">Report</button>
+                <div className="chat-header" style={{alignItems:'center'}}>
+                  <div style={{display:'flex', alignItems:'center', gap:8}}>
+                    <div className="chat-title">Chat</div>
+                    <div style={{fontSize:12, color:'#aaa'}}>{matchName ?? 'No peer'}</div>
+                  </div>
+                  <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                    <button onClick={handleReport} className="btn btn-report">Report</button>
+                  </div>
                 </div>
 
                 <div className="chat-window">
                   {messages.length === 0 && <div className="empty">No messages yet — be friendly and safe.</div>}
                   {messages.map(m => (
-                    <div key={m.id} className={`msg ${m.from === 'You' ? 'msg-out' : m.from === 'System' ? 'msg-system' : 'msg-in'}`}>
-                      <div className="from">{m.from}</div>
-                      <div className="bubble">{m.text}</div>
+                    <div key={m.id} style={{marginBottom:8}} className={`msg ${m.from === 'You' ? 'msg-out' : m.from === 'System' ? 'msg-system' : 'msg-in'}`}>
+                      <div className="from" style={{fontSize:12, color:'#8f8f8f'}}>{m.from}</div>
+                      <div className="bubble" style={{display:'inline-block', padding:8, borderRadius:8, marginTop:4, maxWidth:'85%', background: m.from === 'You' ? '#d1ffe0' : m.from === 'System' ? '#fff3c4' : '#ffffffcc'}}>
+                        {m.text}
+                      </div>
+                      {m.from !== 'You' && m.from !== 'System' && (
+                        <button style={{marginLeft:10, fontSize:11}} onClick={() => reportMessage(m)}>Report</button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -583,6 +802,10 @@ body { background:#f3f4f6; color:#111827; }
                   />
                   <button onClick={send} disabled={state !== 'connected' || !input.trim()} className="btn">Send</button>
                 </div>
+
+                <div style={{marginTop:8}}>
+                  <TermsGuidelines />
+                </div>
               </div>
             </div>
 
@@ -590,18 +813,67 @@ body { background:#f3f4f6; color:#111827; }
               <div className="card">
                 <div className="peer-name">{matchName ?? 'No peer'}</div>
                 <div className="peer-status">{state === 'connected' ? 'Connected' : '—'}</div>
-                <div className="tips">
-                  <ul>
-                    <li>Be polite and brief.</li>
-                    <li>Do not share personal details.</li>
-                    <li>Report inappropriate users.</li>
-                  </ul>
+
+                <div style={{marginTop:10}}>
+                  <strong>Quick Rules</strong>
+                  <ol style={{fontSize:13, marginTop:6}}>
+                    <li>Be civil. No hate or threats.</li>
+                    <li>No sexual or explicit content.</li>
+                    <li>No personal contact sharing.</li>
+                    <li>Violations: warning → temporary suspension → ban.</li>
+                  </ol>
+                </div>
+
+                <div style={{marginTop:10, fontSize:13}}>
+                  <strong>Enforcement</strong>
+                  <p style={{margin:0}}>This demo uses automated filters and user reports. Severe or repeat violations will be suspended or banned.</p>
                 </div>
               </div>
             </aside>
           </div>
         </main>
       </div>
+
+      {showTermsModal && (
+        <div style={{
+          position:'fixed', inset:0, display:'flex', alignItems:'center', justifyContent:'center',
+          background:'rgba(0,0,0,0.45)', zIndex:9999, padding:20
+        }}>
+          <div style={{width:'100%', maxWidth:760, background:'#fff', borderRadius:10, padding:20, boxSizing:'border-box', maxHeight:'90vh', overflow:'auto'}}>
+            <h2>Terms & Conditions — TalkNow (Short)</h2>
+            <p>
+              By using TalkNow you confirm you are 18 years or older and agree to follow our community rules.
+              Do not share personal contact info, images containing nudity, or links. Harassment, hate speech,
+              sexual content, or threats are strictly prohibited.
+            </p>
+            <p>
+              Consequences: first verified violation will receive a warning. Second verified violation leads to a temporary suspension
+              (demo: {TEMP_SUSPENSION_MINUTES} minutes). Repeated or severe violations may result in permanent ban.
+            </p>
+
+            <div style={{marginTop:12}}>
+              <label style={{display:'flex', gap:8, alignItems:'center'}}>
+                <input type="checkbox" checked={acceptedTerms} onChange={e => setAcceptedTerms(e.target.checked)} />
+                <span>I accept these Terms & Conditions</span>
+              </label>
+            </div>
+
+            <hr style={{margin:'12px 0'}} />
+
+            <div>
+              <label style={{display:'flex', gap:8, alignItems:'center'}}>
+                <input type="checkbox" checked={ageVerified} onChange={e => setAgeVerified(e.target.checked)} />
+                <span>I confirm I am 18 years of age or older</span>
+              </label>
+            </div>
+
+            <div style={{display:'flex', gap:8, marginTop:16, justifyContent:'flex-end'}}>
+              <button onClick={() => { setShowTermsModal(false); }} className="btn btn-ghost">Close</button>
+              <button onClick={acceptAndClose} className="btn">Accept & Continue</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
