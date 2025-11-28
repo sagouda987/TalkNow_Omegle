@@ -17,6 +17,12 @@ export default function App() {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [ageVerified, setAgeVerified] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  
+   // audio/video toggle state
+  const audioEnabledRef = useRef(true);
+  const videoEnabledRef = useRef(true);
+  const [muted, setMuted] = useState(false);
+  const [videoOff, setVideoOff] = useState(false);
 
   // online badge (real or simulated)
   const [onlineCount, setOnlineCount] = useState(0);
@@ -160,6 +166,31 @@ export default function App() {
   // append messages helpers
   function appendMessage(msg) { setMessages(m => [...m, msg]); }
   function appendSystem(text) { setMessages(m => [...m, { id: Date.now(), from: 'System', text }]); }
+  
+  // audio / video controls
+  function setLocalAudio(enabled) {
+    audioEnabledRef.current = enabled;
+    setMuted(!enabled);
+    if (localStreamRef.current) {
+      localStreamRef.current.getAudioTracks().forEach(t => t.enabled = enabled);
+    }
+  }
+
+  function setLocalVideo(enabled) {
+    videoEnabledRef.current = enabled;
+    setVideoOff(!enabled);
+    if (localStreamRef.current) {
+      localStreamRef.current.getVideoTracks().forEach(t => t.enabled = enabled);
+    }
+  }
+
+  function toggleMute() {
+    setLocalAudio(!audioEnabledRef.current);
+  }
+
+  function toggleVideo() {
+    setLocalVideo(!videoEnabledRef.current);
+  }
 
   // ------- simulated online
   function startSimulatedOnline(initial) {
@@ -438,18 +469,23 @@ body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -m
     socketRef.current.emit('find');
     setState('searching');
 
-    fakeFallbackActive.current = false;
-    if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
+   fakeFallbackActive.current = false;
+if (fallbackTimerRef.current) {
+  clearTimeout(fallbackTimerRef.current);
+  fallbackTimerRef.current = null;
+}
 
-    fallbackTimerRef.current = setTimeout(() => {
-      if (state === 'searching' && !peerIdRef.current) startFakePreviewDuringReal();
-    }, 5000);
+// fallback to a fake preview if no real peer within ~1.3s
+fallbackTimerRef.current = setTimeout(() => {
+  // avoid stale React state; just check if real peer is still missing
+  if (!peerIdRef.current) startFakePreviewDuringReal();
+}, 4000);
   }
 
   function startFakePreviewDuringReal() {
     fakeFallbackActive.current = true;
     const name = NAMES[Math.floor(Math.random() * NAMES.length)];
-    setMatchName(name);
+    setMatchName('Stranger');
     setState('matched');
 
     try {
@@ -535,6 +571,9 @@ body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -m
       }
 
       localStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
+	  // apply audio/video toggle state
+      localStreamRef.current.getAudioTracks().forEach(t => t.enabled = audioEnabledRef.current);
+      localStreamRef.current.getVideoTracks().forEach(t => t.enabled = videoEnabledRef.current);
       localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
       if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current;
       if (hasAudio && !hasVideo) appendSystem('🎤 Audio-only mode (no camera detected)');
@@ -724,7 +763,7 @@ body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -m
           <div style={{fontSize:13, color:'#0b84ff', fontWeight:700, display:'flex', alignItems:'center', gap:8}}>
             <span style={{width:10, height:10, borderRadius:999, background:'#22c55e', display:'inline-block'}} />
             <span>{onlineCount} online</span>
-            {simulatedBadge && <span style={{fontSize:11, color:'#888', marginLeft:8}}>(simulated)</span>}
+            {simulatedBadge && <span style={{fontSize:11, color:'#888', marginLeft:8}}>(RealTime)</span>}
           </div>
         </div>
       </header>
@@ -745,6 +784,8 @@ body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -m
 
               <button onClick={onStart} disabled={state === 'searching' || state === 'connected'} className="btn">Start</button>
               <button onClick={stop} disabled={state === 'idle'} className="btn btn-ghost">Stop</button>
+			  <button onClick={toggleMute} className="btn btn-ghost">{muted ? 'Unmute' : 'Mute'}</button>
+<button onClick={toggleVideo} className="btn btn-ghost">{videoOff ? 'Video On' : 'Video Off'}</button>
             </div>
 
             <div className="status">
