@@ -45,6 +45,7 @@ export default function App() {
   const fakePreviewRef = useRef({});
   const fakeFallbackActive = useRef(false);
   const fakeSessionTimerRef = useRef(null);
+  const fakeReplyIntervalRef = useRef(null); // periodic fake replies
 
   // simulation refs
   const simRef = useRef(null);
@@ -191,7 +192,26 @@ export default function App() {
   function toggleVideo() {
     setLocalVideo(!videoEnabledRef.current);
   }
+ // --- periodic fake peer replies ---
+  function startFakeReplies() {
+    stopFakeReplies(); // clear old one first
+    fakeReplyIntervalRef.current = setInterval(() => {
+      if (!fakeFallbackActive.current) return;
+      const reply = {
+        id: Date.now(),
+        from: matchName || 'Stranger',
+        text: generatePeerReply('')
+      };
+      appendMessage(reply);
+    }, 4000 + Math.floor(Math.random() * 8000)); 
+  }
 
+  function stopFakeReplies() {
+    if (fakeReplyIntervalRef.current) {
+      clearInterval(fakeReplyIntervalRef.current);
+      fakeReplyIntervalRef.current = null;
+    }
+  }
   // ------- simulated online
   function startSimulatedOnline(initial) {
     if (simActiveRef.current) return;
@@ -446,6 +466,18 @@ body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -m
       stopSimulatedOnline();
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
       if (fakeSessionTimerRef.current) clearTimeout(fakeSessionTimerRef.current);
+	  if (fakeSessionTimerRef.current) clearTimeout(fakeSessionTimerRef.current);
+
+// Keep fake chat for ~60 seconds
+fakeSessionTimerRef.current = setTimeout(() => {
+  if (!peerIdRef.current) {
+    cleanupFakePreview();
+    startSignalling();
+  }
+}, 60000);
+
+// Start periodic fake replies
+startFakeReplies();
     };
   }, []);
 
@@ -514,6 +546,7 @@ fallbackTimerRef.current = setTimeout(() => {
       if (f.remote) { clearInterval(f.remote.interval); f.remote.stream.getTracks().forEach(t => t.stop()); }
     } catch (e) {}
     fakePreviewRef.current = {};
+	  stopFakeReplies();
     if (fakeSessionTimerRef.current) { clearTimeout(fakeSessionTimerRef.current); fakeSessionTimerRef.current = null; }
   }
 
@@ -660,11 +693,19 @@ fallbackTimerRef.current = setTimeout(() => {
 
     if (dcRef.current && dcRef.current.readyState === 'open' && peerIdRef.current) {
       try { dcRef.current.send(outgoing.text); } catch (e) { console.warn(e); }
-    } else if (fakeFallbackActive.current) {
+    } else if (fakeFallbackActive.current){
+      // immediate reply to your message (delayed ~0.7-1.6s)
       setTimeout(() => {
-        const reply = { id: Date.now() + 1, from: matchName || 'Peer', text: generatePeerReply(outgoing.text) };
+        const reply = {
+          id: Date.now() + 1,
+          from: matchName || 'Stranger',
+          text: generatePeerReply(outgoing.text)
+        };
         appendMessage(reply);
       }, 700 + Math.random() * 900);
+
+      // ensure periodic replies continue / refresh interval
+      startFakeReplies();
     }
 
     setInput('');
