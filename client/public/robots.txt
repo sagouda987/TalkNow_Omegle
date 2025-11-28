@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://www.talknow.it.com/sitemap.xml
