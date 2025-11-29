@@ -17,8 +17,13 @@ export default function App() {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [ageVerified, setAgeVerified] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
-  
-   // audio/video toggle state
+
+  // added UI toggles & responsive state
+  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // audio/video toggle state
   const audioEnabledRef = useRef(true);
   const videoEnabledRef = useRef(true);
   const [muted, setMuted] = useState(false);
@@ -167,7 +172,7 @@ export default function App() {
   // append messages helpers
   function appendMessage(msg) { setMessages(m => [...m, msg]); }
   function appendSystem(text) { setMessages(m => [...m, { id: Date.now(), from: 'System', text }]); }
-  
+
   // audio / video controls
   function setLocalAudio(enabled) {
     audioEnabledRef.current = enabled;
@@ -203,7 +208,7 @@ export default function App() {
         text: generatePeerReply('')
       };
       appendMessage(reply);
-    }, 4000 + Math.floor(Math.random() * 8000)); 
+    }, 4000 + Math.floor(Math.random() * 8000));
   }
 
   function stopFakeReplies() {
@@ -237,121 +242,270 @@ export default function App() {
     setSimulatedBadge(false);
   }
 
+  // useWindowSize hook-like behavior to detect mobile breakpoint
+  useEffect(() => {
+    function onResize() {
+      const w = window.innerWidth;
+      setIsMobile(w <= 680);
+      // automatically expand chat when desktop
+      if (w > 680) setChatCollapsed(false);
+    }
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // inject styles once (responsive + side-by-side chat)
   useEffect(() => {
     const css = `
-:root { font-family: Inter, Arial, sans-serif; }
-html, body, #root { height: 100%; margin: 0; }
-body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+:root{
+  --bg: #f3f4f6;
+  --card: #ffffff;
+  --muted: #9aa0a6;
+  --accent: #0b84ff;
+  --panel-bg: #0f1724;
+  --radius: 12px;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+  --gap: 14px;
+}
 
-.app-root { min-height:100vh; box-sizing:border-box; padding:18px; width:100%; display:flex; flex-direction:column; gap:16px; }
+/* page */
+html,body,#root { height:100%; margin:0; }
+body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+
+/* root wrapper */
+.app-root {
+  max-width:1200px;
+  margin:14px auto;
+  padding:18px;
+  box-sizing:border-box;
+  display:flex;
+  flex-direction:column;
+  gap:var(--gap);
+  min-height:calc(100vh - 36px);
+}
 
 /* header */
-.header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
-.header h1 { margin:0; font-size:20px; white-space:nowrap; }
-.sub { font-size:13px; color:#666; white-space:nowrap; }
+.header {
+  display:flex;
+  gap:12px;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+}
+.header h1 { margin:0; font-size:20px; letter-spacing:0.2px; }
+.sub { font-size:13px; color:var(--muted); white-space:nowrap; }
 
-/* layout: main + sidebar */
+/* layout grid: main + sidebar */
 .layout {
   display:grid;
   grid-template-columns: 1fr 320px;
-  gap:16px;
+  gap:18px;
   align-items:start;
   width:100%;
+  min-height: calc(100vh - 220px);
   box-sizing:border-box;
-  min-height: calc(100vh - 120px);
-  padding-bottom:8px;
 }
 
 /* main card */
-.main-card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 6px 18px rgba(20,20,50,0.06); display:flex; flex-direction:column; gap:12px; min-height:0; }
+.main-card {
+  background:var(--card);
+  border-radius:var(--radius);
+  padding:16px;
+  box-shadow:0 6px 18px rgba(20,20,50,0.06);
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+  min-height:0;
+  overflow:visible;
+}
 
 /* controls */
-.controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-.btn { padding:8px 12px; border-radius:10px; background:#0b84ff; color:#fff; border:none; cursor:pointer; font-weight:600; }
-.btn-ghost { margin-left:8px; background:#eee; color:#333; }
-.status { margin-left:auto; display:flex; gap:8px; align-items:center; }
+.controls {
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.control-group { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.btn {
+  padding:10px 14px;
+  border-radius:10px;
+  background:var(--accent);
+  color:#fff;
+  border:none;
+  cursor:pointer;
+  font-weight:600;
+  font-size:14px;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+}
+.btn:disabled { opacity:0.55; cursor:not-allowed; }
+.btn-ghost { background:#f1f5f9; color:#111; border:1px solid #e6eefb; }
+.btn-report { background:#fff0f0; color:#b33; border:1px solid #f5c2c2; padding:8px 10px; border-radius:8px; font-size:13px; }
 
-/* media + chat container: we keep media-panel as container that lays out videos and chat side-by-side */
+/* status area */
+.status { margin-left:auto; display:flex; gap:12px; align-items:center; font-size:13px; color:var(--muted); }
+
+/* media + chat wrapper */
 .media-and-chat { display:flex; gap:12px; flex-direction:column; min-height:0; }
 
-/* media panel contains videos and chat as two columns on desktop */
+/* panel with videos + chat */
 .media-panel {
   width:100%;
   border-radius:10px;
-  overflow:hidden;
-  background:#111827;
+  background: var(--panel-bg);
   padding:12px;
   display:flex;
-  flex-direction:row; /* <-- changed: side-by-side by default */
+  flex-direction:row;
   gap:12px;
-  min-height:0;
+  min-height:360px;
+  box-sizing:border-box;
+  color:#dbeafe;
+}
+
+/* videos (left) */
+.videos { display:flex; flex-direction:column; gap:12px; flex:1 1 60%; min-width:0; }
+
+/* caption */
+.caption { font-size:12px; color:rgba(255,255,255,0.72); margin-bottom:6px; }
+
+/* video element responsive using aspect-ratio */
+.video {
+  width:100%;
+  background:#000;
+  border-radius:10px;
+  object-fit:cover;
+  display:block;
+  min-height:120px;
+  height:auto;
+  aspect-ratio: 16 / 10;
+}
+
+/* chat section (right) */
+.chat-section {
+  width:360px;
+  max-width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
   box-sizing:border-box;
 }
 
-/* videos area (left column) */
-.videos { display:flex; flex-direction:column; gap:12px; flex:1 1 auto; min-width:0; }
+/* chat header */
+.chat-header { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.chat-title { color:rgba(255,255,255,0.85); font-weight:700; font-size:15px; }
+.chat-window {
+  margin-top:6px;
+  height:320px;
+  overflow:auto;
+  padding:12px;
+  background:rgba(255,255,255,0.03);
+  border-radius:8px;
+  box-sizing:border-box;
+}
+.empty { color:rgba(255,255,255,0.4); font-size:13px; }
 
-/* keep each video responsive */
-.local, .remote { display:flex; flex-direction:column; gap:8px; min-height:0; }
-.caption { font-size:12px; color:#ddd; margin-bottom:4px; }
-.video { width:100%; height:260px; border-radius:10px; background:#000; object-fit:cover; display:block; min-height:120px; }
+/* messages */
+.msg { margin-bottom:10px; display:block; max-width:100%; }
+.msg .from { font-size:12px; color:rgba(255,255,255,0.6); margin-bottom:4px; }
+.bubble {
+  display:inline-block;
+  padding:8px 12px;
+  border-radius:10px;
+  margin-top:6px;
+  max-width:84%;
+  word-wrap:break-word;
+  line-height:1.4;
+  font-size:14px;
+}
 
-/* chat section (right column) */
-.chat-section { width:360px; max-width:100%; display:flex; flex-direction:column; gap:8px; box-sizing:border-box; }
+/* unified message bubble look for dark panel */
+.msg-in .bubble,
+.msg-out .bubble,
+.msg-system .bubble {
+  background: rgba(255,255,255,0.06); /* subtle translucent panel */
+  color: #e7eef6;                        /* readable soft text */
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 10px;
+  padding: 8px 12px;
+  max-width: 84%;
+  word-wrap: break-word;
+  line-height: 1.35;
+}
 
-/* chat header / window / input */
-.chat-header { display:flex; justify-content:space-between; align-items:center; }
-.chat-title { color:#bbb; }
-.btn-report { font-size:12px; padding:6px 10px; border-radius:8px; background:#ffecec; border:1px solid #f5c2c2; }
-.chat-window { margin-top:8px; height:320px; overflow:auto; padding:10px; background:rgba(255,255,255,0.02); border-radius:8px; }
-.empty { color:#9aa; font-size:13px; }
-.msg { margin-bottom:8px; }
-.msg .from { font-size:12px; color:#8f8f8f; }
-.msg .bubble { display:inline-block; padding:8px 10px; border-radius:8px; margin-top:4px; max-width:85%; word-wrap:break-word; }
-.msg-out .bubble { background:#d1ffe0; }
-.msg-in .bubble { background:#ffffffcc; }
-.msg-system .bubble { background:#fff3c4; }
-.chat-input { display:flex; gap:8px; margin-top:8px; }
-.chat-input input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid #ddd; background:#fff; }
+/* very subtle outgoing cue (non-intrusive) */
+.msg-out .bubble {
+  box-shadow: inset 0 0 0 1px rgba(34,197,94,0.04);
+}
+
+/* system messages slightly warmer text */
+.msg-system .bubble {
+  color: #f3f0e6;
+}
+
+/* chat input */
+.chat-input { display:flex; gap:8px; margin-top:8px; align-items:center; }
+.chat-input input {
+  flex:1;
+  padding:10px 12px;
+  border-radius:10px;
+  border:none;
+  outline: none;
+  background:#fff;
+  font-size:14px;
+  box-sizing:border-box;
+}
 
 /* sidebar card */
 .sidebar { width:100%; max-width:320px; display:flex; flex-direction:column; gap:12px; box-sizing:border-box; }
-.card { padding:12px; border-radius:10px; background:#fff; box-shadow:0 6px 18px rgba(20,20,50,0.06); }
-.peer-name { font-size:13px; font-weight:700; }
-.peer-status { font-size:12px; color:#666; margin-top:6px; }
-.tips { margin-top:10px; font-size:12px; color:#444; }
+.card { padding:12px; border-radius:10px; background:var(--card); box-shadow:0 6px 18px rgba(20,20,50,0.06); }
 
-/* responsive tweaks */
-/* when smaller than 1100px, stack chat under videos */
+/* responsive: below 1100px, stack chat under videos and move sidebar under */
 @media (max-width:1100px) {
-  .media-panel { flex-direction:column; }
-  .videos { flex-direction:column; }
-  .video { height:240px; }
-  .chat-section { width:100%; max-width:100%; }
+  .layout { grid-template-columns: 1fr; }
+  .media-panel { flex-direction:column; min-height:520px; }
+  .videos { flex-direction:row; gap:10px; }
+  .video { aspect-ratio: 4 / 3; height:200px; }
+  .chat-section { width:100%; }
+  .sidebar { order: 3; }
 }
 
-/* mobile */
+/* mobile: small screen polish */
 @media (max-width:680px) {
-  .header h1 { font-size:18px; }
-  .controls { gap:8px; }
-  .video { height:200px; }
-  .chat-window { height:220px; }
-  .chat-input input { padding:10px; }
-  .btn { padding:8px 10px; font-size:14px; }
-  .layout { padding-bottom:20px; }
+  .app-root { padding:12px; }
+  .header h1 { font-size:17px; }
+  .controls { gap:8px; align-items:center; }
+  .btn { padding:10px 12px; font-size:15px; border-radius:10px; }
+  .btn-ghost { padding:10px 12px; }
+  .media-panel { padding:10px; gap:10px; }
+  .video { height:160px; aspect-ratio: 16/9; }
+  .chat-window { height:220px; padding:10px; }
+  .chat-input input { padding:10px; font-size:14px; }
+  .chat-section { position:relative; }
+  .btn-report { padding:8px 10px; font-size:13px; }
+
+  /* make controls stack with full width buttons on small screens */
+  .control-group, .controls > div:first-child { width:100%; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .controls .btn { flex: 0 1 auto; }
 }
 
-/* small polish */
-@media (prefers-reduced-motion: reduce) {
-  * { transition:none !important; animation:none !important; }
-}
-`;
+/* accessibility: reduce motion */
+@media (prefers-reduced-motion: reduce) { * { transition:none !important; animation:none !important; } }
+
+/* small helpers */
+.hidden-sm { display:none; }
+@media (min-width:681px) { .hidden-sm { display:inline-block; } }
+    `;
     const style = document.createElement('style');
     style.dataset.owner = 'talknow-singlefile';
     style.appendChild(document.createTextNode(css));
     document.head.appendChild(style);
-    return () => document.head.removeChild(style);
+    return () => {
+      if (style && style.parentNode) style.parentNode.removeChild(style);
+    };
   }, []);
 
   // ----------------- FAKE preview helpers -----------------
@@ -380,7 +534,7 @@ body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -m
       ctx.strokeRect(0, 0, c.width, c.height);
     }, 80);
     const stream = c.captureStream(15);
-    el.srcObject = stream; el.play().catch(() => {});
+    try { el.srcObject = stream; el.play().catch(() => {}); } catch (e) { /* ignore */ }
     return { interval: id, stream };
   }
 
@@ -466,19 +620,9 @@ body { background:#f3f4f6; color:#111827; -webkit-font-smoothing:antialiased; -m
       stopSimulatedOnline();
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
       if (fakeSessionTimerRef.current) clearTimeout(fakeSessionTimerRef.current);
-	  if (fakeSessionTimerRef.current) clearTimeout(fakeSessionTimerRef.current);
-
-// Keep fake chat for ~60 seconds
-fakeSessionTimerRef.current = setTimeout(() => {
-  if (!peerIdRef.current) {
-    cleanupFakePreview();
-    startSignalling();
-  }
-}, 60000);
-
-// Start periodic fake replies
-startFakeReplies();
+      if (fakeReplyIntervalRef.current) clearInterval(fakeReplyIntervalRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function startSignalling() {
@@ -502,21 +646,19 @@ startFakeReplies();
     setState('searching');
 
    fakeFallbackActive.current = false;
-if (fallbackTimerRef.current) {
-  clearTimeout(fallbackTimerRef.current);
-  fallbackTimerRef.current = null;
-}
+   if (fallbackTimerRef.current) {
+     clearTimeout(fallbackTimerRef.current);
+     fallbackTimerRef.current = null;
+   }
 
-// fallback to a fake preview if no real peer within ~1.3s
-fallbackTimerRef.current = setTimeout(() => {
-  // avoid stale React state; just check if real peer is still missing
-  if (!peerIdRef.current) startFakePreviewDuringReal();
-}, 4000);
+   // fallback to a fake preview if no real peer within ~4s
+   fallbackTimerRef.current = setTimeout(() => {
+     if (!peerIdRef.current) startFakePreviewDuringReal();
+   }, 4000);
   }
 
   function startFakePreviewDuringReal() {
     fakeFallbackActive.current = true;
-    const name = NAMES[Math.floor(Math.random() * NAMES.length)];
     setMatchName('Stranger');
     setState('matched');
 
@@ -546,7 +688,7 @@ fallbackTimerRef.current = setTimeout(() => {
       if (f.remote) { clearInterval(f.remote.interval); f.remote.stream.getTracks().forEach(t => t.stop()); }
     } catch (e) {}
     fakePreviewRef.current = {};
-	  stopFakeReplies();
+    stopFakeReplies();
     if (fakeSessionTimerRef.current) { clearTimeout(fakeSessionTimerRef.current); fakeSessionTimerRef.current = null; }
   }
 
@@ -604,7 +746,7 @@ fallbackTimerRef.current = setTimeout(() => {
       }
 
       localStreamRef.current = await navigator.mediaDevices.getUserMedia(constraints);
-	  // apply audio/video toggle state
+      // apply audio/video toggle state
       localStreamRef.current.getAudioTracks().forEach(t => t.enabled = audioEnabledRef.current);
       localStreamRef.current.getVideoTracks().forEach(t => t.enabled = videoEnabledRef.current);
       localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
@@ -812,7 +954,7 @@ fallbackTimerRef.current = setTimeout(() => {
       <div className="layout">
         <main className="main-card">
           <div className="controls">
-            <div style={{display:'flex', gap:8, alignItems:'center'}}>
+            <div style={{display:'flex', gap:8, alignItems:'center'}} className="control-group">
               <label style={{display:'flex', alignItems:'center', gap:8}}>
                 <input type="checkbox" checked={acceptedTerms} onChange={e => setAcceptedTerms(e.target.checked)} />
                 <span style={{fontSize:13}}>I accept Terms & Conditions</span>
@@ -825,11 +967,21 @@ fallbackTimerRef.current = setTimeout(() => {
 
               <button onClick={onStart} disabled={state === 'searching' || state === 'connected'} className="btn">Start</button>
               <button onClick={stop} disabled={state === 'idle'} className="btn btn-ghost">Stop</button>
-			  <button onClick={toggleMute} className="btn btn-ghost">{muted ? 'Unmute' : 'Mute'}</button>
-<button onClick={toggleVideo} className="btn btn-ghost">{videoOff ? 'Video On' : 'Video Off'}</button>
+              <button onClick={toggleMute} className="btn btn-ghost" aria-pressed={muted}>{muted ? 'Unmute' : 'Mute'}</button>
+              <button onClick={toggleVideo} className="btn btn-ghost" aria-pressed={videoOff}>{videoOff ? 'Video On' : 'Video Off'}</button>
+
+              {/* Chat collapse toggle */}
+              <button
+                onClick={() => setChatCollapsed(c => !c)}
+                className="btn btn-ghost"
+                aria-pressed={chatCollapsed}
+                title={chatCollapsed ? "Show chat" : "Hide chat"}
+              >
+                {chatCollapsed ? 'Show Chat' : 'Hide Chat'}
+              </button>
             </div>
 
-            <div className="status">
+            <div className="status" role="status" aria-live="polite">
               <div className="label">Status:</div>
               <div className="value" style={{marginLeft:8}}>{state}</div>
             </div>
@@ -848,50 +1000,56 @@ fallbackTimerRef.current = setTimeout(() => {
                 </div>
               </div>
 
-              <div className="chat-section">
-                <div className="chat-header" style={{alignItems:'center'}}>
-                  <div style={{display:'flex', alignItems:'center', gap:8}}>
-                    <div className="chat-title">Chat</div>
-                    <div style={{fontSize:12, color:'#aaa'}}>{matchName ?? 'No peer'}</div>
-                  </div>
-                  <div style={{display:'flex', gap:8, alignItems:'center'}}>
-                    <button onClick={handleReport} className="btn btn-report">Report</button>
-                  </div>
-                </div>
-
-                <div className="chat-window">
-                  {messages.length === 0 && <div className="empty">No messages yet — be friendly and safe.</div>}
-                  {messages.map(m => (
-                    <div key={m.id} style={{marginBottom:8}} className={`msg ${m.from === 'You' ? 'msg-out' : m.from === 'System' ? 'msg-system' : 'msg-in'}`}>
-                      <div className="from" style={{fontSize:12, color:'#8f8f8f'}}>{m.from}</div>
-                      <div className="bubble" style={{display:'inline-block', padding:8, borderRadius:8, marginTop:4, maxWidth:'85%', background: m.from === 'You' ? '#d1ffe0' : m.from === 'System' ? '#fff3c4' : '#ffffffcc'}}>
-                        {m.text}
-                      </div>
-                      {m.from !== 'You' && m.from !== 'System' && (
-                        <button style={{marginLeft:10, fontSize:11}} onClick={() => reportMessage(m)}>Report</button>
-                      )}
+              {/* hide chat on mobile when collapsed */}
+              {! (isMobile && chatCollapsed) && (
+                <div className="chat-section" aria-hidden={isMobile && chatCollapsed}>
+                  <div className="chat-header" style={{alignItems:'center'}}>
+                    <div style={{display:'flex', alignItems:'center', gap:8}}>
+                      <div className="chat-title">Chat</div>
+                      <div style={{fontSize:12, color:'#aaa'}}>{matchName ?? 'No peer'}</div>
                     </div>
-                  ))}
-                </div>
+                    <div style={{display:'flex', gap:8, alignItems:'center'}}>
+                      <button onClick={handleReport} className="btn btn-report">Report</button>
+                    </div>
+                  </div>
 
-                <div className="chat-input">
-                  <input
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    placeholder={state === 'connected' ? 'Say hi...' : 'Start a conversation when connected.'}
-                    onKeyDown={e => { if (e.key === 'Enter') send(); }}
-                    disabled={state !== 'connected'}
-                  />
-                  <button onClick={send} disabled={state !== 'connected' || !input.trim()} className="btn">Send</button>
-                </div>
+                  <div className="chat-window">
+                    {messages.length === 0 && <div className="empty">No messages yet — be friendly and safe.</div>}
+                    {messages.map(m => (
+  <div key={m.id} style={{marginBottom:8}} className={`msg ${m.from === 'You' ? 'msg-out' : m.from === 'System' ? 'msg-system' : 'msg-in'}`}>
+    <div className="from" style={{fontSize:12, color:'#8f8f8f'}}>{m.from}</div>
 
-                <div style={{marginTop:8}}>
-                  <TermsGuidelines />
+    <div className="bubble">
+      {m.text}
+    </div>
+
+    {m.from !== 'You' && m.from !== 'System' && (
+      <button style={{marginLeft:10, fontSize:11}} onClick={() => reportMessage(m)}>Report</button>
+    )}
+  </div>
+))}
+                  </div>
+
+                  <div className="chat-input">
+                    <input
+                      value={input}
+                      onChange={e => setInput(e.target.value)}
+                      placeholder={state === 'connected' ? 'Say hi...' : 'Start a conversation when connected.'}
+                      onKeyDown={e => { if (e.key === 'Enter') send(); }}
+                      disabled={state !== 'connected'}
+                      aria-label="Chat message"
+                    />
+                    <button onClick={send} disabled={state !== 'connected' || !input.trim()} className="btn">Send</button>
+                  </div>
+
+                  <div style={{marginTop:8}}>
+                    <TermsGuidelines />
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
-            <aside className="sidebar">
+            <aside className="sidebar" aria-hidden={sidebarCollapsed}>
               <div className="card">
                 <div className="peer-name">{matchName ?? 'No peer'}</div>
                 <div className="peer-status">{state === 'connected' ? 'Connected' : '—'}</div>
