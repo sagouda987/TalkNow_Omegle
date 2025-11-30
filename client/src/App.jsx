@@ -43,7 +43,13 @@ export default function App() {
   const localStreamRef = useRef(null);
   const remoteStreamRef = useRef(null);
   const peerIdRef = useRef(null);
-  const selfIdRef = useRef(null);
+   const selfIdRef = useRef(null);
+  // <-- add this:
+  const manualStopRef = useRef(false);
+
+
+  // input ref to manage cursor and emoji insertion
+  const inputRef = useRef(null);
 
   // fake-preview helpers
   const fallbackTimerRef = useRef(null);
@@ -459,6 +465,11 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
   box-sizing:border-box;
 }
 
+/* emoji picker styles */
+.emoji-btn { padding:8px 10px; border-radius:8px; background:#fff; border:1px solid rgba(0,0,0,0.06); cursor:pointer; }
+.emoji-pop { position:absolute; right:12px; bottom:72px; background:#fff; border-radius:10px; padding:8px; box-shadow:0 10px 30px rgba(20,20,50,0.12); display:grid; grid-template-columns: repeat(8, 28px); gap:6px; z-index: 10000; }
+.emoji-pop button { border:none; background:transparent; font-size:18px; cursor:pointer; }
+
 /* sidebar card */
 .sidebar { width:100%; max-width:320px; display:flex; flex-direction:column; gap:12px; box-sizing:border-box; }
 .card { padding:12px; border-radius:10px; background:var(--card); box-shadow:0 6px 18px rgba(20,20,50,0.06); }
@@ -595,10 +606,12 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
       }
     });
 
-    socket.on('peer-disconnected', () => {
+      socket.on('peer-disconnected', () => {
       appendSystem('Peer disconnected');
-      cleanupConnection();
-      setState('idle');
+      // cleanupConnection();
+      // setState('idle');
+      // ----> replace above with:
+      attemptAutoRestart('peer-disconnected');
     });
 
     socket.on('moderation', ({ offender, action, reason }) => {
@@ -722,8 +735,11 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
       pc.ondatachannel = (e) => setupDataChannel(e.channel);
     }
 
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') appendSystem('Connection lost.');
+     pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        appendSystem('Connection lost.');
+        attemptAutoRestart('pc-connection-failed');
+      }
     };
 
     try {
@@ -806,7 +822,10 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
 
       appendMessage({ id: Date.now(), from: 'Stranger', text });
     };
-    dc.onclose = () => appendSystem('Stranger disconnect, Click Start');
+     dc.onclose = () => {
+      appendSystem('Stranger disconnected — attempting to reconnect...');
+      attemptAutoRestart('dc-closed');
+    };
     dc.onerror = (err) => console.warn('DC error', err);
   }
 
@@ -865,7 +884,8 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
   }
 
   // --- stop/cleanup
-  async function stop() {
+   async function stop() {
+    manualStopRef.current = true;             // <-- mark manual stop so auto-restart won't happen
     if (socketRef.current && socketRef.current.connected) {
       socketRef.current.emit('cancel');
     }
@@ -888,7 +908,34 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   }
+// Try to auto-restart matching after a peer disconnects (respects manualStopRef and local ban)
+  function attemptAutoRestart(reason = 'peer-disconnected') {
+    // don't auto-restart if user manually stopped, or if local user is banned/suspended
+    if (manualStopRef.current) {
+      appendSystem('Auto-reconnect skipped (you stopped the session).');
+      return;
+    }
+    const myId = selfIdRef.current;
+    if (myId && penaltiesRef.current[myId] && penaltiesRef.current[myId].banned) {
+      appendSystem('Auto-reconnect skipped: you are banned.');
+      return;
+    }
 
+    appendSystem('Peer disconnected — attempting to find a new match...');
+    cleanupConnection();
+    cleanupFakePreview();
+
+    // small backoff so UI updates show before re-requesting
+    setState('searching');
+    setTimeout(() => {
+      if (socketRef.current && socketRef.current.connected) {
+        socketRef.current.emit('find');
+      } else {
+        // safe fallback — will connect socket and start signalling
+        startSignalling();
+      }
+    }, 900);
+  }
   // UI helper to accept terms and age
   function acceptAndClose() {
     if (!ageVerified) { appendSystem('Please confirm you are 18+ to continue.'); return; }
@@ -929,8 +976,56 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
     );
   }
 
+  // ---------------- EMOJI PICKER ----------------
+  // simple inline emoji picker — adjust list as desired
+  const EMOJIS = ['😄','😊','😂','😍','😉','😢','😮','😡','👍','👎','👏','🙏','🤝','🔥','💯','🎉','🤖','🌟','💬','🥳','🤗','😎','🤔','🙌'];
+  const [emojiOpen, setEmojiOpen] = useState(false);
+
+  useEffect(() => {
+    function onDocClick(e) {
+      if (!emojiOpen) return;
+      // close if click outside the emoji pop — inputRef isn't the pop root so we always close on document click
+      setEmojiOpen(false);
+    }
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, [emojiOpen]);
+
+  function toggleEmoji(e) {
+    e.stopPropagation();
+    setEmojiOpen(o => !o);
+    // focus input when opening
+    setTimeout(() => inputRef.current && inputRef.current.focus(), 0);
+  }
+
+  function insertEmoji(emoji) {
+    // insert emoji at cursor position inside the input
+    const el = inputRef.current;
+    if (!el) {
+      setInput(prev => prev + emoji);
+      return;
+    }
+
+    const start = el.selectionStart || 0;
+    const end = el.selectionEnd || 0;
+    const before = input.slice(0, start);
+    const after = input.slice(end);
+    const next = before + emoji + after;
+    setInput(next);
+
+    // move cursor after inserted emoji
+    requestAnimationFrame(() => {
+      if (el.setSelectionRange) {
+        const pos = start + emoji.length;
+        el.setSelectionRange(pos, pos);
+        el.focus();
+      }
+    });
+  }
+
   // onStart
-  function onStart() {
+    function onStart() {
+    manualStopRef.current = false;            // <-- clear manual stop when user starts
     setMessages([]);
     trackEvent('chat_start', { method: 'start_button' });
     startSignalling();
@@ -1030,16 +1125,38 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
 ))}
                   </div>
 
-                  <div className="chat-input">
-                    <input
-                      value={input}
-                      onChange={e => setInput(e.target.value)}
-                      placeholder={state === 'connected' ? 'Say hi...' : 'Start a conversation when connected.'}
-                      onKeyDown={e => { if (e.key === 'Enter') send(); }}
-                      disabled={state !== 'connected'}
-                      aria-label="Chat message"
-                    />
-                    <button onClick={send} disabled={state !== 'connected' || !input.trim()} className="btn">Send</button>
+                  <div style={{position:'relative'}}>
+                    <div className="chat-input">
+                      <input
+                        ref={inputRef}
+                        value={input}
+                        onChange={e => setInput(e.target.value)}
+                        placeholder={state === 'connected' ? 'Say hi...' : 'Start a conversation when connected.'}
+                        onKeyDown={e => { if (e.key === 'Enter') send(); }}
+                        disabled={state !== 'connected'}
+                        aria-label="Chat message"
+                      />
+
+                      <button
+                        type="button"
+                        className="emoji-btn"
+                        onClick={(e) => { e.stopPropagation(); toggleEmoji(e); }}
+                        title="Open emoji picker"
+                      >
+                        😊
+                      </button>
+
+                      <button onClick={send} disabled={state !== 'connected' || !input.trim()} className="btn">Send</button>
+                    </div>
+
+                    {emojiOpen && (
+                      <div className="emoji-pop" onClick={(e) => e.stopPropagation()}>
+                        {EMOJIS.map((em) => (
+                          <button key={em} onClick={() => insertEmoji(em)}>{em}</button>
+                        ))}
+                      </div>
+                    )}
+
                   </div>
 
                   <div style={{marginTop:8}}>
