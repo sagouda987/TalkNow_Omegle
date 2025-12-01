@@ -1038,6 +1038,9 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
         <h1>TalkNow — Chat With Stranger</h1>
         <div style={{display:'flex', alignItems:'center', gap:12}}>
           <div className="sub">Happy And Safe Chatting</div>
+		  <div className="sub" style={{fontSize:12, color:'#666'}}>
+  Send feedback/Improvement/Queries: <strong>talknow047@gmail.com</strong>
+</div>
           <div style={{fontSize:13, color:'#0b84ff', fontWeight:700, display:'flex', alignItems:'center', gap:8}}>
             <span style={{width:10, height:10, borderRadius:999, background:'#22c55e', display:'inline-block'}} />
             <span>{onlineCount} online</span>
