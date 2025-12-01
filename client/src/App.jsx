@@ -1081,7 +1081,7 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
 
             <div className="status" role="status" aria-live="polite">
               <div className="label">Status:</div>
-              <div className="value" style={{marginLeft:8}}>{state}</div>
+              <div className="value" style={{marginLeft:8}}><b>{state}</b></div>
             </div>
           </div>
 
