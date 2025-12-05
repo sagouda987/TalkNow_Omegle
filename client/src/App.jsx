@@ -978,7 +978,7 @@ setInput('');
     setMessages([]);
 setInput('');
     if (manualStopRef.current) {
-      appendSystem('Auto-reconnect skipped (you stopped the session).');
+      appendSystem('Auto-reconnect skipped (you stopped the session).CLICK START TO FIND NEW PEOPLE.');
       return;
     }
     const myId = selfIdRef.current;
