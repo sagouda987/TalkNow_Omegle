@@ -265,11 +265,11 @@ export default function App() {
   useEffect(() => {
     const css = `
 :root{
-  --bg: #f3f4f6;
+  --bg: #131c2cff;
   --card: #ffffff;
-  --muted: #9aa0a6;
+  --muted: #dde5ecff;
   --accent: #0b84ff;
-  --panel-bg: #0f1724;
+  --panel-bg: #08142bff;
   --radius: 12px;
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color-scheme: light;
@@ -280,16 +280,20 @@ export default function App() {
 html,body,#root { height:100%; margin:0; }
 body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
 
-/* root wrapper */
 .app-root {
-  max-width:1200px;
-  margin:14px auto;
-  padding:18px;
-  box-sizing:border-box;
-  display:flex;
-  flex-direction:column;
-  gap:var(--gap);
-  min-height:calc(100vh - 36px);
+  width: 100%;          /* wide */
+  max-width: 100vw;     /* full viewport width */
+  margin: 0 auto;       /* center */
+
+  padding: 8px;
+  box-sizing: border-box;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+
+  height: 50vh;         /* 🔥 make height less */
+  min-height: 70vh;     /* 🔥 not full height — you can adjust */
 }
 
 /* header */
@@ -326,7 +330,32 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
   min-height:0;
   overflow:visible;
 }
+/* base style */
+.status-value {
+  margin-left: 8px;
+  font-weight: bold;
+  padding: 4px 10px;
+  border-radius: 6px;
+  text-transform: capitalize;
+}
 
+/* idle = red */
+.status-idle {
+  background: #ff3b3b;
+  color: white;
+}
+
+/* searching = dark grey / black */
+.status-searching {
+  background: #222;
+  color: #fff;
+}
+
+/* connected = green */
+.status-connected {
+  background: #22c55e;
+  color: white;
+}
 /* controls */
 .controls {
   display:flex;
@@ -373,8 +402,28 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
 }
 
 /* videos (left) */
-.videos { display:flex; flex-direction:column; gap:12px; flex:1 1 60%; min-width:0; }
+.videos {
+  flex: 2 1 auto !important;   /* TAKE more horizontal space */
+}
+.rainbow-title {
+  display: inline-block;
+  font-weight: 800;
+  background: linear-gradient(90deg,
+    #ff4d4d, #ff9a4d, #ffd24d, #7cff4d, #4dd6ff, #7b4dff, #ff4dd3);
+  background-size: 600% 600%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: rainbowShift 10s linear infinite;
+  /* optional: subtle glow */
+  text-shadow: 0 2px 10px rgba(0,0,0,0.12), 0 0 18px rgba(255,255,255,0.02);
+}
 
+@keyframes rainbowShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
 /* caption */
 .caption { font-size:12px; color:rgba(255,255,255,0.72); margin-bottom:6px; }
 
@@ -1035,7 +1084,7 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
   return (
     <div className="app-root">
       <header className="header">
-        <h1>TalkNow — Chat With Stranger</h1>
+        <h1 className="rainbow-title">TalkNow — Chat With Stranger</h1>
         <div style={{display:'flex', alignItems:'center', gap:12}}>
           <div className="sub">Happy And Safe Chatting</div>
 		  <div className="sub" style={{fontSize:12, color:'#666'}}>
@@ -1081,7 +1130,9 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
 
             <div className="status" role="status" aria-live="polite">
               <div className="label">Status:</div>
-              <div className="value" style={{marginLeft:8}}><b>{state}</b></div>
+            <div className={`status-value status-${state}`}>
+  <b>{state}</b>
+</div>
             </div>
           </div>
 
