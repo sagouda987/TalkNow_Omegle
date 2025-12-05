@@ -281,20 +281,10 @@ html,body,#root { height:100%; margin:0; }
 body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
 
 .app-root {
-  width: 100%;          /* wide */
-  max-width: 100vw;     /* full viewport width */
-  margin: 0 auto;       /* center */
-
-  padding: 8px;
-  box-sizing: border-box;
-
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap);
-
-  height: 50vh;         /* 🔥 make height less */
-  min-height: 70vh;     /* 🔥 not full height — you can adjust */
+  width:100vw; max-width:100vw; margin:8px 0; padding:18px; box-sizing:border-box;
+  display:flex; flex-direction:column; gap:var(--gap); min-height:calc(100vh - 28px);
 }
+
 
 /* header */
 .header {
@@ -308,15 +298,8 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
 .sub { font-size:13px; color:var(--muted); white-space:nowrap; }
 
 /* layout grid: main + sidebar */
-.layout {
-  display:grid;
-  grid-template-columns: 1fr 320px;
-  gap:18px;
-  align-items:start;
-  width:100%;
-  min-height: calc(100vh - 220px);
-  box-sizing:border-box;
-}
+.layout { display:grid; grid-template-columns: 1fr 320px; gap:10px; width:100%; height:calc(100% - 48px); box-sizing:border-box; }
+
 
 /* main card */
 .main-card {
@@ -428,16 +411,7 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
 .caption { font-size:12px; color:rgba(255,255,255,0.72); margin-bottom:6px; }
 
 /* video element responsive using aspect-ratio */
-.video {
-  width:100%;
-  background:#000;
-  border-radius:10px;
-  object-fit:cover;
-  display:block;
-  min-height:120px;
-  height:auto;
-  aspect-ratio: 16 / 10;
-}
+.video { width:100%; height:clamp(140px, 34vh, 560px); object-fit:cover; border-radius:8px; background:#000; }
 
 /* chat section (right) */
 .chat-section {
@@ -624,6 +598,8 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
     });
 
     socket.on('matched', ({ matchId, peer }) => {
+      setMessages([]);   // CLEAR CHAT IMMEDIATELY ON NEW MATCH
+setInput('');
       console.log('[socket] matched', peer);
       if (fakeFallbackActive.current) cleanupFakePreview();
       peerIdRef.current = peer;
@@ -849,6 +825,7 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
   function setupDataChannel(dc) {
     dcRef.current = dc;
     dc.onopen = () => {
+      setMessages([]);
       appendSystem('You Can Text Now. Connected To Stranger');
       trackEvent('chat_connected', { peer: matchName || null });
     };
@@ -959,7 +936,10 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
   }
 // Try to auto-restart matching after a peer disconnects (respects manualStopRef and local ban)
   function attemptAutoRestart(reason = 'peer-disconnected') {
-    // don't auto-restart if user manually stopped, or if local user is banned/suspended
+    // don't auto-restart if user manually stopped, or if local user 
+    // is banned/suspended
+    setMessages([]);
+setInput('');
     if (manualStopRef.current) {
       appendSystem('Auto-reconnect skipped (you stopped the session).');
       return;
