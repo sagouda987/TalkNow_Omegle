@@ -284,6 +284,17 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
   width:100vw; max-width:100vw; margin:8px 0; padding:18px; box-sizing:border-box;
   display:flex; flex-direction:column; gap:var(--gap); min-height:calc(100vh - 28px);
 }
+/* default (balanced) */
+.video { width:100%; height:100%; object-fit:cover; border-radius:8px; }
+
+/* small tiles */
+.video.small { transform: scale(0.85); }
+
+/* large tiles */
+.video.large { transform: scale(1.08); }
+
+/* fast, smooth transition */
+.video { transition: transform 180ms ease; transform-origin: center; }
 
 
 /* header */
@@ -383,6 +394,32 @@ body { background:var(--bg); -webkit-font-smoothing:antialiased; -moz-osx-font-s
   box-sizing:border-box;
   color:#dbeafe;
 }
+  /* ========== VIDEO SIZE OPTIONS ========== */
+
+/* default (your existing size) */
+.video.default {
+  width: 100%;
+  height: 100%;
+}
+
+/* SMALL video */
+.video.small {
+  width: 60% !important;
+  height: 60% !important;
+  transform: scale(0.75);
+  transition: transform 0.2s ease;
+  transform-origin: center;
+}
+
+/* LARGE video */
+.video.large {
+  width: 120% !important;
+  height: 120% !important;
+  transform: scale(1.25);
+  transition: transform 0.2s ease;
+  transform-origin: center;
+}
+
 
 /* videos (left) */
 .videos {
@@ -1005,6 +1042,15 @@ setInput('');
     );
   }
 
+  const [videoSize, setVideoSize] = useState('default'); // 'small' | 'default' | 'large'
+function toggleVideoSize() {
+  setVideoSize(s =>
+    s === 'large' ? 'small' :
+    s === 'small' ? 'default' :
+    'large'
+  );
+}
+
   // ---------------- EMOJI PICKER ----------------
   // simple inline emoji picker — adjust list as desired
   const EMOJIS = ['😄','😊','😂','😍','😉','😢','😮','😡','👍','👎','👏','🙏','🤝','🔥','💯','🎉','🤖','🌟','💬','🥳','🤗','😎','🤔','🙌'];
@@ -1091,7 +1137,9 @@ setInput('');
                 <input type="checkbox" checked={ageVerified} onChange={e => setAgeVerified(e.target.checked)} />
                 <span style={{fontSize:13}}>I confirm I am 18+</span>
               </label>
-
+<button onClick={toggleVideoSize} className="btn btn-ghost">
+  Video Size: {videoSize}
+</button>
               <button onClick={onStart} disabled={state === 'searching' || state === 'connected'} className="btn">Start</button>
               <button onClick={stop} disabled={state === 'idle'} className="btn btn-ghost">Stop</button>
               <button onClick={toggleMute} className="btn btn-ghost" aria-pressed={muted}>{muted ? 'Unmute' : 'Mute'}</button>
@@ -1121,11 +1169,20 @@ setInput('');
               <div className="videos">
                 <div className="local">
                   <div className="caption">Local</div>
-                  <video ref={localVideoRef} muted playsInline className="video" />
+                  <video
+  ref={localVideoRef}
+  muted
+  playsInline
+  className={`video ${videoSize}`}
+/>
                 </div>
                 <div className="remote">
                   <div className="caption">Remote</div>
-                  <video ref={remoteVideoRef} playsInline className="video" />
+             <video
+  ref={remoteVideoRef}
+  playsInline
+  className={`video ${videoSize}`}
+/>
                 </div>
               </div>
 
