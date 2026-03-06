@@ -11,10 +11,43 @@ const PORT = process.env.PORT || 4000;
 let queue = [];
 const pairs = new Map();
 
+function removeFromQueue(socketId) {
+  queue = queue.filter((q) => q.id !== socketId);
+}
+
+function isSocketPaired(socketId) {
+  for (const pair of pairs.values()) {
+    if (pair.a === socketId || pair.b === socketId) return true;
+  }
+  return false;
+}
+
+function unpairSocket(socketId, notifyPeer = false) {
+  for (const [matchId, pair] of pairs.entries()) {
+    if (pair.a === socketId || pair.b === socketId) {
+      const peer = pair.a === socketId ? pair.b : pair.a;
+      pairs.delete(matchId);
+      if (notifyPeer && peer) io.to(peer).emit('peer-disconnected');
+    }
+  }
+}
+
 function pairUsers() {
   while (queue.length >= 2) {
     const a = queue.shift();
     const b = queue.shift();
+
+    if (!a?.connected || !b?.connected) continue;
+    if (a.id === b.id) {
+      if (a.connected) queue.push(a);
+      continue;
+    }
+    if (isSocketPaired(a.id) || isSocketPaired(b.id)) {
+      if (!isSocketPaired(a.id) && a.connected) queue.push(a);
+      if (!isSocketPaired(b.id) && b.connected) queue.push(b);
+      continue;
+    }
+
     const matchId = `${a.id}-${b.id}-${Date.now()}`;
     pairs.set(matchId, { a: a.id, b: b.id });
     io.to(a.id).emit('matched', { matchId, peer: b.id });
@@ -26,13 +59,16 @@ io.on('connection', (socket) => {
   console.log('socket connected', socket.id);
 
   socket.on('find', () => {
+    removeFromQueue(socket.id);
+    unpairSocket(socket.id, true);
     queue.push(socket);
     socket.emit('searching');
     pairUsers();
   });
 
   socket.on('cancel', () => {
-    queue = queue.filter(q => q.id !== socket.id);
+    removeFromQueue(socket.id);
+    unpairSocket(socket.id, true);
     socket.emit('cancelled');
   });
 
@@ -46,14 +82,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    queue = queue.filter(q => q.id !== socket.id);
-    for (const [matchId, pair] of pairs.entries()) {
-      if (pair.a === socket.id || pair.b === socket.id) {
-        const peer = pair.a === socket.id ? pair.b : pair.a;
-        io.to(peer).emit('peer-disconnected');
-        pairs.delete(matchId);
-      }
-    }
+    removeFromQueue(socket.id);
+    unpairSocket(socket.id, true);
   });
 });
 
