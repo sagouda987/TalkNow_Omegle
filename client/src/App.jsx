@@ -1489,14 +1489,14 @@ function toggleVideoSize() {
           position:'fixed', inset:0, display:'flex', alignItems:'center', justifyContent:'center',
           background:'rgba(0,0,0,0.45)', zIndex:9999, padding:20
         }}>
-          <div style={{width:'100%', maxWidth:760, background:'#fff', borderRadius:10, padding:20, boxSizing:'border-box', maxHeight:'90vh', overflow:'auto'}}>
-            <h2>Terms & Conditions — TalkNow (Short)</h2>
-            <p>
+          <div style={{width:'100%', maxWidth:760, background:'#fff', color:'#0f172a', borderRadius:10, padding:20, boxSizing:'border-box', maxHeight:'90vh', overflow:'auto', boxShadow:'0 22px 44px rgba(15, 23, 42, 0.35)'}}>
+            <h2 style={{margin:'0 0 10px', color:'#0f172a'}}>Terms & Conditions - TalkNow (Short)</h2>
+            <p style={{margin:'0 0 12px', color:'#334155', lineHeight:1.5}}>
               By using TalkNow you confirm you are 18 years or older and agree to follow our community rules.
               Do not share personal contact info, images containing nudity, or links. Harassment, hate speech,
               sexual content, or threats are strictly prohibited.
             </p>
-            <p>
+            <p style={{margin:'0 0 12px', color:'#334155', lineHeight:1.5}}>
               Consequences: first verified violation will receive a warning. Second verified violation leads to a temporary suspension
               (demo: {TEMP_SUSPENSION_MINUTES} minutes). Repeated or severe violations may result in permanent ban.
             </p>
@@ -1504,7 +1504,7 @@ function toggleVideoSize() {
             <div style={{marginTop:12}}>
               <label style={{display:'flex', gap:8, alignItems:'center'}}>
                 <input type="checkbox" checked={acceptedTerms} onChange={e => setAcceptedTerms(e.target.checked)} />
-                <span>I accept these Terms & Conditions</span>
+                <span style={{color:'#0f172a'}}>I accept these Terms & Conditions</span>
               </label>
             </div>
 
@@ -1513,7 +1513,7 @@ function toggleVideoSize() {
             <div>
               <label style={{display:'flex', gap:8, alignItems:'center'}}>
                 <input type="checkbox" checked={ageVerified} onChange={e => setAgeVerified(e.target.checked)} />
-                <span>I confirm I am 18 years of age or older</span>
+                <span style={{color:'#0f172a'}}>I confirm I am 18 years of age or older</span>
               </label>
             </div>
 
@@ -1540,3 +1540,4 @@ const generatePeerReply = (text) => {
   ];
   return replies[Math.floor(Math.random() * replies.length)];
 };
+
