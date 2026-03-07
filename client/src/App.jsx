@@ -5,6 +5,33 @@ import { io } from 'socket.io-client';
 
 const SIGNAL_URL = import.meta.env.VITE_SIGNAL_URL || 'http://localhost:4000';
 const LOCAL_PENALTIES_KEY = 'talknow_penalties_v1';
+const LIVE_FEED_NAMES = [
+  'Stranger_12','Stranger_19','Stranger_27','Stranger_35','Stranger_44','Stranger_58',
+  'Stranger_63','Stranger_71','Stranger_84','Stranger_93','Stranger_107','Stranger_118',
+  'Stranger_126','Stranger_139','Stranger_144','Stranger_152'
+];
+const LIVE_FEED_LINES = [
+  'Anyone from India here?',
+  'Hello from Brazil.',
+  'Mic check, can you hear me?',
+  'This chat is active today.',
+  'Who wants to practice English?',
+  'I just joined, what is happening?',
+  'Good vibes only.',
+  'Any gamers here?',
+  'Nice to meet you all.',
+  'Where are you all chatting from?',
+  'How is everyone doing tonight?',
+  'Can we keep this chat respectful please?',
+  'I like this platform.',
+  'Anyone from Europe online?',
+  'Who is still awake right now?',
+  'I am new here.',
+  'Music recommendations?',
+  'What are you all talking about?',
+  'Let us keep the chat clean.',
+  'This feels like old Omegle days.'
+];
 
 export default function App() {
   // --- app state
@@ -22,6 +49,7 @@ export default function App() {
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [showFloatingLive, setShowFloatingLive] = useState(false);
 
   // audio/video toggle state
   const audioEnabledRef = useRef(true);
@@ -32,6 +60,8 @@ export default function App() {
   // online badge (real or simulated)
   const [onlineCount, setOnlineCount] = useState(0);
   const [simulatedBadge, setSimulatedBadge] = useState(false);
+  const [liveFeedMessages, setLiveFeedMessages] = useState([]);
+  const [liveFeedInput, setLiveFeedInput] = useState('');
 
   // DOM & realtime refs
   const localVideoRef = useRef(null);
@@ -57,6 +87,10 @@ export default function App() {
   const fakeFallbackActive = useRef(false);
   const fakeSessionTimerRef = useRef(null);
   const fakeReplyIntervalRef = useRef(null); // periodic fake replies
+  const lastAutoReplyRef = useRef('');
+  const liveFeedTimerRef = useRef(null);
+  const liveFeedScrollRef = useRef(null);
+  const liveFeedRecentRef = useRef([]);
 
   // simulation refs
   const simRef = useRef(null);
@@ -178,6 +212,49 @@ export default function App() {
   // append messages helpers
   function appendMessage(msg) { setMessages(m => [...m, msg]); }
   function appendSystem(text) { setMessages(m => [...m, { id: Date.now(), from: 'System', text }]); }
+  function appendLiveFeedMessage(from, text, type = 'stranger') {
+    setLiveFeedMessages((prev) => [...prev, { id: Date.now() + Math.random(), from, text, type }].slice(-220));
+  }
+  function pickLiveFeedLine() {
+    const recent = liveFeedRecentRef.current;
+    const filtered = LIVE_FEED_LINES.filter((line) => !recent.includes(line));
+    const pool = filtered.length ? filtered : LIVE_FEED_LINES;
+    const picked = pool[Math.floor(Math.random() * pool.length)];
+    liveFeedRecentRef.current = [...recent.slice(-5), picked];
+    return picked;
+  }
+  function pushRandomLiveMessage() {
+    const from = LIVE_FEED_NAMES[Math.floor(Math.random() * LIVE_FEED_NAMES.length)];
+    const text = pickLiveFeedLine();
+    appendLiveFeedMessage(from, text, 'stranger');
+  }
+  function sendLiveFeedMessage() {
+    const text = liveFeedInput.trim();
+    if (!text) return;
+    const moderation = moderateText(text);
+    if (!moderation.allowed) {
+      appendLiveFeedMessage('System', `Blocked: ${moderation.reason}`, 'system');
+      setLiveFeedInput('');
+      return;
+    }
+    appendLiveFeedMessage('You', text, 'you');
+    setLiveFeedInput('');
+
+    // Simulated organic response from the crowd.
+    const responseDelay = 900 + Math.floor(Math.random() * 2500);
+    setTimeout(() => {
+      const from = LIVE_FEED_NAMES[Math.floor(Math.random() * LIVE_FEED_NAMES.length)];
+      const quickReplies = [
+        'Welcome.',
+        'Nice point.',
+        'True.',
+        'Interesting.',
+        'Good to see you here.'
+      ];
+      const textReply = quickReplies[Math.floor(Math.random() * quickReplies.length)];
+      appendLiveFeedMessage(from, textReply, 'stranger');
+    }, responseDelay);
+  }
 
   // audio / video controls
   function setLocalAudio(enabled) {
@@ -232,6 +309,40 @@ export default function App() {
       fakeReplyIntervalRef.current = null;
     }
   }
+
+  function generatePeerReply(text = '') {
+    const source = (text || '').trim().toLowerCase();
+    const short = source.split(' ').slice(0, 6).join(' ');
+    const baseReplies = [
+      'Interesting, tell me more.',
+      'Nice. Where are you from?',
+      'What do you usually do for fun?',
+      'That is cool. How did you get into it?',
+      'Same here, what else are you into?',
+      'Good vibe. What is your favorite music?',
+      'Do you prefer text chat or video chat?',
+      'What time is it for you right now?',
+      'How is your day going so far?',
+      'That sounds great.'
+    ];
+
+    const contextualReplies = short
+      ? [
+          `You said "${short}", that sounds nice.`,
+          `Got it about "${short}".`,
+          `"${short}" is interesting.`,
+          `I like what you said about "${short}".`
+        ]
+      : [];
+
+    const candidates = [...baseReplies, ...contextualReplies];
+    const filtered = candidates.filter((r) => r !== lastAutoReplyRef.current);
+    const pool = filtered.length > 0 ? filtered : candidates;
+    const chosen = pool[Math.floor(Math.random() * pool.length)];
+    lastAutoReplyRef.current = chosen;
+    return chosen;
+  }
+
   // ------- simulated online
   function startSimulatedOnline(initial) {
     if (simActiveRef.current) return;
@@ -262,6 +373,7 @@ export default function App() {
     function onResize() {
       const w = window.innerWidth;
       setIsMobile(w <= 680);
+      setShowFloatingLive(w >= 1760);
       // automatically expand chat when desktop
       if (w > 680) setChatCollapsed(false);
     }
@@ -269,6 +381,48 @@ export default function App() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  // Right-side floating live community feed (desktop ultra-wide only).
+  useEffect(() => {
+    if (!showFloatingLive) {
+      if (liveFeedTimerRef.current) clearTimeout(liveFeedTimerRef.current);
+      return;
+    }
+
+    if (liveFeedMessages.length === 0) {
+      const seed = Array.from({ length: 10 }).map((_, idx) => ({
+        id: Date.now() + idx,
+        from: LIVE_FEED_NAMES[Math.floor(Math.random() * LIVE_FEED_NAMES.length)],
+        text: pickLiveFeedLine(),
+        type: 'stranger'
+      }));
+      setLiveFeedMessages(seed);
+    }
+
+    let active = true;
+    const loop = () => {
+      const delay = 1300 + Math.floor(Math.random() * 3200);
+      liveFeedTimerRef.current = setTimeout(() => {
+        if (!active) return;
+        pushRandomLiveMessage();
+        loop();
+      }, delay);
+    };
+    loop();
+
+    return () => {
+      active = false;
+      if (liveFeedTimerRef.current) clearTimeout(liveFeedTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showFloatingLive]);
+
+  useEffect(() => {
+    if (!showFloatingLive) return;
+    const box = liveFeedScrollRef.current;
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
+  }, [showFloatingLive, liveFeedMessages]);
 
   // inject styles once (responsive + side-by-side chat)
   useEffect(() => {
@@ -311,7 +465,7 @@ body {
 }
 
 .app-root {
-  width: min(1440px, 100vw - clamp(12px, 3vw, 38px));
+  width: min(1420px, 100vw - clamp(12px, 3vw, 38px));
   margin: clamp(10px, 2.2vw, 24px) auto;
   padding: clamp(12px, 2vw, 24px);
   border-radius: 24px;
@@ -470,7 +624,7 @@ body {
   color: #dbeafe;
   padding: 12px;
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(360px, 0.9fr);
+  grid-template-columns: minmax(0, 1.6fr) minmax(250px, 0.8fr);
   gap: 12px;
   align-items: stretch;
 }
@@ -516,7 +670,7 @@ body {
 .chat-section {
   min-width: 0;
   min-height: 0;
-  min-width: 360px;
+  min-width: 250px;
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -638,10 +792,95 @@ body {
 
 .sidebar {
   width: 100%;
-  max-width: 320px;
+  max-width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.floating-live-chat {
+  position: fixed;
+  right: 18px;
+  top: 96px;
+  width: 280px;
+  max-height: calc(100vh - 120px);
+  z-index: 80;
+  border-radius: 14px;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  background: linear-gradient(170deg, #0b1f36 0%, #08172b 100%);
+  box-shadow: 0 18px 36px rgba(2, 6, 23, 0.45);
+  color: #e2e8f0;
+  padding: 12px;
+}
+.floating-live-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  font-size: .92rem;
+  margin-bottom: 6px;
+}
+.floating-live-badge {
+  font-size: .68rem;
+  color: #fee2e2;
+  background: rgba(239, 68, 68, 0.3);
+  border: 1px solid rgba(239, 68, 68, 0.42);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.floating-live-sub {
+  font-size: .75rem;
+  color: rgba(148, 163, 184, .95);
+  margin-bottom: 8px;
+}
+.floating-live-window {
+  height: min(54vh, 520px);
+  overflow: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(2, 6, 23, 0.34);
+  padding: 9px;
+  scrollbar-width: thin;
+}
+.floating-live-window::-webkit-scrollbar { width: 8px; }
+.floating-live-window::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
+}
+.floating-live-item { margin-bottom: 8px; }
+.floating-live-name {
+  font-size: .72rem;
+  font-weight: 700;
+  color: #38bdf8;
+  margin-right: 6px;
+}
+.floating-live-text {
+  font-size: .82rem;
+  line-height: 1.32;
+  color: #e2e8f0;
+}
+.floating-live-item.you .floating-live-name { color: #86efac; }
+.floating-live-item.you .floating-live-text { color: #dcfce7; }
+.floating-live-item.system .floating-live-name { color: #fca5a5; }
+.floating-live-item.system .floating-live-text { color: #fecaca; }
+.floating-live-input {
+  margin-top: 9px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.floating-live-input input {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, .36);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: .82rem;
+  background: rgba(248, 250, 252, 0.95);
+}
+.floating-live-input input:focus {
+  outline: 0;
+  box-shadow: var(--ring);
+  border-color: rgba(14,165,233,.65);
 }
 .card {
   padding: 14px;
@@ -662,6 +901,22 @@ body {
 }
 .card ol, .card ul { padding-left: 1.1rem; margin: 8px 0; color: #1e293b; }
 .card p { color: #334155; }
+@media (max-width: 1420px) {
+  .media-panel {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .videos {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: none;
+  }
+  .chat-section {
+    min-width: 0;
+  }
+  .video {
+    height: clamp(220px, 32vh, 400px);
+  }
+}
 
 @media (max-width: 1220px) {
   .sidebar {
@@ -927,6 +1182,7 @@ setInput('');
 
   function startFakePreviewDuringReal() {
     fakeFallbackActive.current = true;
+    lastAutoReplyRef.current = '';
     setMatchName('Stranger');
     setState('matched');
 
@@ -1307,6 +1563,7 @@ function toggleVideoSize() {
 
   // Render
   return (
+    <>
     <div className="app-root">
       <header className="header">
         <h1 className="rainbow-title">TalkNow — Chat With Stranger</h1>
@@ -1339,8 +1596,8 @@ function toggleVideoSize() {
 <button onClick={toggleVideoSize} className="btn btn-ghost">
   Video Size: {videoSize}
 </button>
-              <button onClick={onStart} disabled={state === 'searching' || state === 'connected'} className="btn">Start</button>
-              <button onClick={stop} disabled={state === 'idle'} className="btn btn-ghost">Stop</button>
+              <button onClick={onStart} disabled={state === 'searching' || state === 'connected'} className="btn">Connect</button>
+              <button onClick={stop} disabled={state === 'idle'} className="btn btn-ghost">Disconnect</button>
               <button onClick={toggleMute} className="btn btn-ghost" aria-pressed={muted}>{muted ? 'Unmute' : 'Mute'}</button>
               <button onClick={toggleVideo} className="btn btn-ghost" aria-pressed={videoOff}>{videoOff ? 'Video On' : 'Video Off'}</button>
 
@@ -1525,19 +1782,47 @@ function toggleVideoSize() {
         </div>
       )}
     </div>
+    {showFloatingLive && (
+      <aside className="floating-live-chat" aria-label="Live community chat">
+        <div className="floating-live-head">
+          <span>Live Community Chat</span>
+          <span className="floating-live-badge">LIVE</span>
+        </div>
+        <div className="floating-live-sub">Public room feed (simulated strangers)</div>
+
+        <div className="floating-live-window" ref={liveFeedScrollRef}>
+          {liveFeedMessages.length === 0 && (
+            <div className="empty">No live messages yet.</div>
+          )}
+          {liveFeedMessages.map((m) => (
+            <div key={m.id} className={`floating-live-item ${m.type || 'stranger'}`}>
+              <span className="floating-live-name">{m.from}</span>
+              <span className="floating-live-text">{m.text}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="floating-live-input">
+          <input
+            value={liveFeedInput}
+            onChange={(e) => setLiveFeedInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') sendLiveFeedMessage(); }}
+            placeholder="Send message to live chat..."
+            aria-label="Send message to live chat"
+          />
+          <button
+            onClick={sendLiveFeedMessage}
+            className="btn"
+            disabled={!liveFeedInput.trim()}
+          >
+            Send
+          </button>
+        </div>
+      </aside>
+    )}
+    </>
   );
 }
 
-// --- helper: fake peer reply
-const generatePeerReply = (text) => {
-  const short = text.split(' ').slice(0, 6).join(' ');
-  const replies = [
-    `Nice — you said: "${short}"`,
-    "That's interesting! Tell me more.",
-    'Cool — where are you from?',
-    "I like that. What's your favorite hobby?",
-    "Haha, same. What's next?",
-  ];
-  return replies[Math.floor(Math.random() * replies.length)];
-};
+
 
