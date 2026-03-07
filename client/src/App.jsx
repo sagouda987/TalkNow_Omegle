@@ -8,7 +8,8 @@ const LOCAL_PENALTIES_KEY = 'talknow_penalties_v1';
 const LIVE_FEED_NAMES = [
   'Stranger_12','Stranger_19','Stranger_27','Stranger_35','Stranger_44','Stranger_58',
   'Stranger_63','Stranger_71','Stranger_84','Stranger_93','Stranger_107','Stranger_118',
-  'Stranger_126','Stranger_139','Stranger_144','Stranger_152'
+  'Stranger_126','Stranger_139','Stranger_144','Stranger_152','Stranger_166','Stranger_173',
+  'Stranger_181','Stranger_194','Stranger_205','Stranger_216','Stranger_229','Stranger_237'
 ];
 const LIVE_FEED_LINES = [
   'Anyone from India here?',
@@ -30,7 +31,52 @@ const LIVE_FEED_LINES = [
   'Music recommendations?',
   'What are you all talking about?',
   'Let us keep the chat clean.',
-  'This feels like old Omegle days.'
+  'This feels like old Omegle days.',
+  'Anyone learning coding here?',
+  'What language are you practicing?',
+  'Any movie suggestions for tonight?',
+  'Quick reminder: keep chat friendly.',
+  'Is the audio clear for everyone?',
+  'Who joined just now?',
+  'Do you prefer voice or text?',
+  'Who is from Asia?',
+  'Who is from the US?',
+  'How is your weekend going?',
+  'Any football fans here?',
+  'Any cricket fans online?',
+  'Drop your favorite song genre.',
+  'This room is moving fast today.',
+  'Can everyone hear me properly?',
+  'Sending good vibes to all.',
+  'Who likes late-night chats?',
+  'Random question: tea or coffee?',
+  'Anyone into anime here?',
+  'Anyone into photography?',
+  'What time is it in your city?',
+  'Where are you chatting from today?',
+  'What app did you switch from?',
+  'Tell one fun fact about your city.',
+  'Who else is new to this site?',
+  'Let us avoid spam and keep it clean.',
+  'Any students online right now?',
+  'Any developers in this room?',
+  'What games are trending now?',
+  'How many languages do you speak?',
+  'Anyone here from South America?',
+  'Anyone from Middle East online?',
+  'What music are you listening to?',
+  'Weekend plans anyone?',
+  'Friendly chat only please.',
+  'This community feels active now.',
+  'Say hi if you are online.',
+  'Who else cannot sleep?',
+  'Any travel lovers here?',
+  'What is everyone discussing?',
+  'Tell us your favorite cuisine.',
+  'Anyone attending classes tomorrow?',
+  'What is your go-to hobby?',
+  'Hope everyone is doing well.',
+  'Who is up for a clean chat?'
 ];
 
 export default function App() {
@@ -50,6 +96,7 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [showFloatingLive, setShowFloatingLive] = useState(false);
+  const [liveChatHidden, setLiveChatHidden] = useState(false);
 
   // audio/video toggle state
   const audioEnabledRef = useRef(true);
@@ -61,6 +108,7 @@ export default function App() {
   // online badge (real or simulated)
   const [onlineCount, setOnlineCount] = useState(0);
   const [simulatedBadge, setSimulatedBadge] = useState(false);
+  const [isSocketConnected, setIsSocketConnected] = useState(false);
   const [liveFeedMessages, setLiveFeedMessages] = useState([]);
   const [liveFeedInput, setLiveFeedInput] = useState('');
 
@@ -91,7 +139,12 @@ export default function App() {
   const lastAutoReplyRef = useRef('');
   const liveFeedTimerRef = useRef(null);
   const liveFeedScrollRef = useRef(null);
-  const liveFeedRecentRef = useRef([]);
+  const liveFeedRecentLineRef = useRef([]);
+  const liveFeedRecentNameRef = useRef([]);
+  const liveFeedLastActivityRef = useRef(Date.now());
+  const liveFeedNextInjectAtRef = useRef(Date.now() + 1800);
+  const livePendingSendsRef = useRef([]);
+  const liveOwnEchoGuardRef = useRef([]);
   const faceDetectorRef = useRef(null);
   const faceModerationTimerRef = useRef(null);
   const faceMissStreakRef = useRef(0);
@@ -219,48 +272,74 @@ export default function App() {
   // append messages helpers
   function appendMessage(msg) { setMessages(m => [...m, msg]); }
   function appendSystem(text) { setMessages(m => [...m, { id: Date.now(), from: 'System', text }]); }
-  function appendLiveFeedMessage(from, text, type = 'stranger') {
-    setLiveFeedMessages((prev) => [...prev, { id: Date.now() + Math.random(), from, text, type }].slice(-220));
+  function scheduleNextLiveInject(minMs = 1200, maxMs = 2800) {
+    const delay = minMs + Math.floor(Math.random() * (maxMs - minMs + 1));
+    liveFeedNextInjectAtRef.current = Date.now() + delay;
   }
-  function pickLiveFeedLine() {
-    const recent = liveFeedRecentRef.current;
-    const filtered = LIVE_FEED_LINES.filter((line) => !recent.includes(line));
-    const pool = filtered.length ? filtered : LIVE_FEED_LINES;
-    const picked = pool[Math.floor(Math.random() * pool.length)];
-    liveFeedRecentRef.current = [...recent.slice(-5), picked];
+  function pickFromPoolNoRepeat(pool, recentRef, recentWindow = 8) {
+    const recent = recentRef.current;
+    const filtered = pool.filter((item) => !recent.includes(item));
+    const source = filtered.length ? filtered : pool;
+    const picked = source[Math.floor(Math.random() * source.length)];
+    recentRef.current = [...recent.slice(-(recentWindow - 1)), picked];
     return picked;
   }
+  function appendLiveFeedMessage(entry) {
+    if (!entry || !entry.text) return;
+    liveFeedLastActivityRef.current = Date.now();
+    scheduleNextLiveInject(1400, 3200);
+    setLiveFeedMessages((prev) => [...prev, {
+      id: entry.id || (Date.now() + Math.random()),
+      from: entry.from || 'Stranger',
+      text: entry.text,
+      type: entry.type || 'stranger'
+    }].slice(-220));
+  }
+  function pickLiveFeedLine() {
+    return pickFromPoolNoRepeat(LIVE_FEED_LINES, liveFeedRecentLineRef, 12);
+  }
+  function pickLiveFeedName() {
+    return pickFromPoolNoRepeat(LIVE_FEED_NAMES, liveFeedRecentNameRef, 6);
+  }
   function pushRandomLiveMessage() {
-    const from = LIVE_FEED_NAMES[Math.floor(Math.random() * LIVE_FEED_NAMES.length)];
+    const from = pickLiveFeedName();
     const text = pickLiveFeedLine();
-    appendLiveFeedMessage(from, text, 'stranger');
+    appendLiveFeedMessage({ from, text, type: 'bot' });
+  }
+  function flushPendingLiveMessages() {
+    if (!socketRef.current || !socketRef.current.connected) return;
+    const queued = [...livePendingSendsRef.current];
+    livePendingSendsRef.current = [];
+    queued.forEach((text) => {
+      socketRef.current.emit('live:send', { text });
+    });
   }
   function sendLiveFeedMessage() {
     const text = liveFeedInput.trim();
     if (!text) return;
     const moderation = moderateText(text);
     if (!moderation.allowed) {
-      appendLiveFeedMessage('System', `Blocked: ${moderation.reason}`, 'system');
+      appendLiveFeedMessage({ from: 'System', text: `Blocked: ${moderation.reason}`, type: 'system' });
       setLiveFeedInput('');
       return;
     }
-    appendLiveFeedMessage('You', text, 'you');
-    setLiveFeedInput('');
+    if (!socketRef.current) return;
+    appendLiveFeedMessage({ from: 'You', text, type: 'you' });
+    liveOwnEchoGuardRef.current.push({ text, ts: Date.now() });
+    if (liveOwnEchoGuardRef.current.length > 20) {
+      liveOwnEchoGuardRef.current = liveOwnEchoGuardRef.current.slice(-20);
+    }
 
-    // Simulated organic response from the crowd.
-    const responseDelay = 900 + Math.floor(Math.random() * 2500);
-    setTimeout(() => {
-      const from = LIVE_FEED_NAMES[Math.floor(Math.random() * LIVE_FEED_NAMES.length)];
-      const quickReplies = [
-        'Welcome.',
-        'Nice point.',
-        'True.',
-        'Interesting.',
-        'Good to see you here.'
-      ];
-      const textReply = quickReplies[Math.floor(Math.random() * quickReplies.length)];
-      appendLiveFeedMessage(from, textReply, 'stranger');
-    }, responseDelay);
+    if (socketRef.current.connected) {
+      socketRef.current.emit('live:send', { text });
+      setLiveFeedInput('');
+      return;
+    }
+
+    const socket = socketRef.current;
+    livePendingSendsRef.current.push(text);
+    socket.connect();
+    setLiveFeedInput('');
   }
 
   // audio / video controls
@@ -461,40 +540,63 @@ export default function App() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Right-side floating live community feed (desktop ultra-wide only).
+  // Keep community feed continuously active with low-repetition filler.
   useEffect(() => {
-    if (!showFloatingLive) {
+    if (!showFloatingLive || liveChatHidden) {
       if (liveFeedTimerRef.current) clearTimeout(liveFeedTimerRef.current);
       return;
     }
 
-    if (liveFeedMessages.length === 0) {
-      const seed = Array.from({ length: 10 }).map((_, idx) => ({
+    setLiveFeedMessages((prev) => {
+      if (prev.length >= 6) return prev;
+      const seed = Array.from({ length: 8 }).map((_, idx) => ({
         id: Date.now() + idx,
-        from: LIVE_FEED_NAMES[Math.floor(Math.random() * LIVE_FEED_NAMES.length)],
+        from: pickLiveFeedName(),
         text: pickLiveFeedLine(),
-        type: 'stranger'
+        type: 'bot'
       }));
-      setLiveFeedMessages(seed);
-    }
+      return [...prev, ...seed].slice(-220);
+    });
 
     let active = true;
-    const loop = () => {
-      const delay = 1300 + Math.floor(Math.random() * 3200);
+    const tick = () => {
       liveFeedTimerRef.current = setTimeout(() => {
         if (!active) return;
-        pushRandomLiveMessage();
-        loop();
-      }, delay);
+        const now = Date.now();
+        const idleMs = now - liveFeedLastActivityRef.current;
+        if (now >= liveFeedNextInjectAtRef.current && idleMs >= 1500) {
+          pushRandomLiveMessage();
+        }
+        if (now >= liveFeedNextInjectAtRef.current && idleMs < 1500) {
+          scheduleNextLiveInject(1100, 2400);
+        }
+        tick();
+      }, 650);
     };
-    loop();
+    if (!liveFeedNextInjectAtRef.current) scheduleNextLiveInject();
+    tick();
 
     return () => {
       active = false;
       if (liveFeedTimerRef.current) clearTimeout(liveFeedTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showFloatingLive]);
+  }, [showFloatingLive, liveChatHidden]);
+
+  // Backup filler when socket is disconnected.
+  useEffect(() => {
+    if (!showFloatingLive || liveChatHidden || isSocketConnected) return;
+    const id = setInterval(() => {
+      const idleMs = Date.now() - liveFeedLastActivityRef.current;
+      if (idleMs > 2600) {
+        pushRandomLiveMessage();
+      }
+    }, 1800);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showFloatingLive, liveChatHidden, isSocketConnected]);
+
+  // Keep live community feed scrolled to newest entry.
 
   useEffect(() => {
     if (!showFloatingLive) return;
@@ -1144,9 +1246,11 @@ body {
     const socket = socketRef.current;
 
     socket.on('connect', () => {
+      setIsSocketConnected(true);
       selfIdRef.current = socket.id;
       console.log('[socket] connected', socket.id);
       socket.emit('presence', { ts: Date.now() });
+      flushPendingLiveMessages();
       trackEvent('client_socket_connect', { socket_id: socket.id });
 
       setTimeout(() => {
@@ -1161,6 +1265,39 @@ body {
         stopSimulatedOnline();
         setOnlineCount(count);
       }
+    });
+
+    socket.on('live:history', (items) => {
+      if (!Array.isArray(items)) return;
+      const normalized = items
+        .filter((it) => it && typeof it.text === 'string')
+        .slice(-220)
+        .map((it) => ({
+          id: it.id || (Date.now() + Math.random()),
+          from: it.from || 'Stranger',
+          text: it.text,
+          type: it.type === 'system' ? 'system' : (it.senderId && it.senderId === socket.id ? 'you' : 'stranger')
+        }));
+      setLiveFeedMessages(normalized);
+    });
+
+    socket.on('live:message', (entry) => {
+      if (!entry || typeof entry.text !== 'string') return;
+      if (entry.senderId && entry.senderId === socket.id) {
+        const idx = liveOwnEchoGuardRef.current.findIndex(
+          (g) => g && g.text === entry.text && Date.now() - g.ts < 15000
+        );
+        if (idx >= 0) {
+          liveOwnEchoGuardRef.current.splice(idx, 1);
+          return;
+        }
+      }
+      appendLiveFeedMessage({
+        id: entry.id,
+        from: entry.from || 'Stranger',
+        text: entry.text,
+        type: entry.type === 'system' ? 'system' : (entry.senderId && entry.senderId === socket.id ? 'you' : 'stranger')
+      });
     });
 
     socket.on('matched', ({ matchId, peer }) => {
@@ -1226,12 +1363,16 @@ setInput('');
     });
 
     socket.on('disconnect', () => {
+      setIsSocketConnected(false);
       console.log('[socket] disconnected');
       if (DEMO_FORCE) startSimulatedOnline();
     });
 
+    if (!socket.connected) socket.connect();
+
     return () => {
       if (socketRef.current) socketRef.current.disconnect();
+      setIsSocketConnected(false);
       stopSimulatedOnline();
       stopLocalFaceModeration();
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
@@ -1707,6 +1848,15 @@ function toggleVideoSize() {
               >
                 {chatCollapsed ? 'Show Chat' : 'Hide Chat'}
               </button>
+
+              <button
+                onClick={() => setLiveChatHidden(v => !v)}
+                className="btn btn-ghost"
+                aria-pressed={!liveChatHidden}
+                title={liveChatHidden ? 'Show live community chat' : 'Hide live community chat'}
+              >
+                {liveChatHidden ? 'Show Live Community' : 'Hide Live Community'}
+              </button>
             </div>
 
             <div className="status" role="status" aria-live="polite">
@@ -1882,13 +2032,23 @@ function toggleVideoSize() {
         </div>
       )}
     </div>
-    {showFloatingLive && (
+    {showFloatingLive && !liveChatHidden && (
       <aside className="floating-live-chat" aria-label="Live community chat">
         <div className="floating-live-head">
           <span>Live Community Chat</span>
-          <span className="floating-live-badge">LIVE</span>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <span className="floating-live-badge">LIVE</span>
+            <button
+              onClick={() => setLiveChatHidden(true)}
+              className="btn btn-ghost"
+              style={{ padding: '4px 8px', fontSize: '.72rem' }}
+              title="Hide live community chat"
+            >
+              Hide
+            </button>
+          </div>
         </div>
-        <div className="floating-live-sub">Public room feed (simulated strangers)</div>
+        <div className="floating-live-sub">Public room feed</div>
 
         <div className="floating-live-window" ref={liveFeedScrollRef}>
           {liveFeedMessages.length === 0 && (
