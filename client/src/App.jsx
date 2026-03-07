@@ -56,6 +56,7 @@ export default function App() {
   const videoEnabledRef = useRef(true);
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(false);
+  const [localFaceMissing, setLocalFaceMissing] = useState(false);
 
   // online badge (real or simulated)
   const [onlineCount, setOnlineCount] = useState(0);
@@ -91,6 +92,10 @@ export default function App() {
   const liveFeedTimerRef = useRef(null);
   const liveFeedScrollRef = useRef(null);
   const liveFeedRecentRef = useRef([]);
+  const faceDetectorRef = useRef(null);
+  const faceModerationTimerRef = useRef(null);
+  const faceMissStreakRef = useRef(0);
+  const faceModerationWarnedRef = useRef(false);
 
   // simulation refs
   const simRef = useRef(null);
@@ -118,6 +123,8 @@ export default function App() {
   const BAD_WORDS = ['fuck','shit','bitch','asshole','cunt','porn','nude']; // simple demo list
   const URL_PATTERN = /(https?:\/\/[^\s]+)/i;
   const IMAGE_EXT_PATTERN = /\.(jpeg|jpg|png|gif|webp|bmp)(\?.*)?$/i;
+  const FACE_CHECK_INTERVAL_MS = 1300;
+  const FACE_MISS_STREAK_THRESHOLD = 2;
 
   // ---------- helpers for penalties persistence ----------
   function loadPenalties() {
@@ -271,6 +278,12 @@ export default function App() {
     if (localStreamRef.current) {
       localStreamRef.current.getVideoTracks().forEach(t => t.enabled = enabled);
     }
+    if (!enabled) {
+      faceMissStreakRef.current = 0;
+      setLocalFaceMissing(false);
+      return;
+    }
+    startLocalFaceModeration();
   }
 
   function toggleMute() {
@@ -288,6 +301,72 @@ export default function App() {
     videoEl.autoplay = true;
     videoEl.playsInline = true;
     if (stream) videoEl.play().catch(() => {});
+  }
+
+  function stopLocalFaceModeration(resetBlur = true) {
+    if (faceModerationTimerRef.current) {
+      clearInterval(faceModerationTimerRef.current);
+      faceModerationTimerRef.current = null;
+    }
+    faceMissStreakRef.current = 0;
+    if (resetBlur) setLocalFaceMissing(false);
+  }
+
+  async function runLocalFaceDetection() {
+    const stream = localStreamRef.current;
+    const videoEl = localVideoRef.current;
+    const videoTrack = stream?.getVideoTracks?.()[0];
+
+    if (!videoEl || !videoTrack || videoTrack.readyState !== 'live' || videoOff || !videoTrack.enabled) {
+      faceMissStreakRef.current = 0;
+      setLocalFaceMissing(false);
+      return;
+    }
+    if (videoEl.readyState < 2 || !videoEl.videoWidth || !videoEl.videoHeight) return;
+
+    try {
+      const faces = await faceDetectorRef.current.detect(videoEl);
+      if (Array.isArray(faces) && faces.length > 0) {
+        faceMissStreakRef.current = 0;
+        setLocalFaceMissing(false);
+      } else {
+        faceMissStreakRef.current += 1;
+        if (faceMissStreakRef.current >= FACE_MISS_STREAK_THRESHOLD) {
+          setLocalFaceMissing(true);
+        }
+      }
+    } catch (err) {
+      console.warn('Face detection failed', err);
+    }
+  }
+
+  function startLocalFaceModeration() {
+    if (faceModerationTimerRef.current) return;
+    const stream = localStreamRef.current;
+    const hasLiveVideo = !!(stream && stream.getVideoTracks().some((t) => t.readyState === 'live'));
+    if (!hasLiveVideo) return;
+
+    const FaceDetectorCtor =
+      (typeof window !== 'undefined' && (window.FaceDetector || window.webkitFaceDetector))
+        ? (window.FaceDetector || window.webkitFaceDetector)
+        : null;
+
+    if (!FaceDetectorCtor) {
+      if (!faceModerationWarnedRef.current) {
+        appendSystem('Face moderation is unavailable in this browser.');
+        faceModerationWarnedRef.current = true;
+      }
+      return;
+    }
+
+    if (!faceDetectorRef.current) {
+      faceDetectorRef.current = new FaceDetectorCtor({ fastMode: true, maxDetectedFaces: 1 });
+    }
+
+    runLocalFaceDetection().catch(() => {});
+    faceModerationTimerRef.current = setInterval(() => {
+      runLocalFaceDetection().catch(() => {});
+    }, FACE_CHECK_INTERVAL_MS);
   }
  // --- periodic fake peer replies ---
   function startFakeReplies() {
@@ -663,9 +742,22 @@ body {
   transform-origin: center;
   transition: transform .2s ease, filter .2s ease;
 }
+.video.face-blur {
+  filter: blur(16px) brightness(0.9);
+}
 .video.default { transform: scale(1); }
 .video.small { transform: scale(.96); }
 .video.large { transform: scale(1.1); }
+.face-mod-note {
+  margin-top: 8px;
+  font-size: .74rem;
+  font-weight: 700;
+  color: #7f1d1d;
+  background: rgba(254, 226, 226, 0.9);
+  border: 1px solid rgba(252, 165, 165, 0.8);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
 
 .chat-section {
   min-width: 0;
@@ -1141,6 +1233,7 @@ setInput('');
     return () => {
       if (socketRef.current) socketRef.current.disconnect();
       stopSimulatedOnline();
+      stopLocalFaceModeration();
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
       if (fakeSessionTimerRef.current) clearTimeout(fakeSessionTimerRef.current);
       if (fakeReplyIntervalRef.current) clearInterval(fakeReplyIntervalRef.current);
@@ -1182,6 +1275,7 @@ setInput('');
 
   function startFakePreviewDuringReal() {
     fakeFallbackActive.current = true;
+    stopLocalFaceModeration();
     lastAutoReplyRef.current = '';
     setMatchName('Stranger');
     setState('matched');
@@ -1284,6 +1378,7 @@ setInput('');
       localStreamRef.current.getVideoTracks().forEach(t => t.enabled = videoEnabledRef.current);
       localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
       attachStreamToVideo(localVideoRef.current, localStreamRef.current, true);
+      startLocalFaceModeration();
       if (hasAudio && !hasVideo) appendSystem('🎤 Audio-only mode (no camera detected)');
       else if (hasVideo && !hasAudio) appendSystem('🎥 Video-only mode (no microphone detected)');
       else appendSystem('✅ Video & audio connected');
@@ -1292,6 +1387,7 @@ setInput('');
       if (e && e.name === 'NotFoundError') appendSystem('❌ Camera/mic not found. Continuing with text chat only.');
       else if (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError')) appendSystem('🔒 Permission denied.');
       else appendSystem('⚠️ Media error. Text chat still works.');
+      stopLocalFaceModeration();
       if (isInitiator) {
         try {
           const offer = await pc.createOffer();
@@ -1422,6 +1518,7 @@ setInput('');
     try { if (pcRef.current) pcRef.current.close(); } catch (e) {}
     if (localStreamRef.current) { localStreamRef.current.getTracks().forEach(t => t.stop()); localStreamRef.current = null; }
     if (remoteStreamRef.current) { remoteStreamRef.current.getTracks().forEach(t => t.stop()); remoteStreamRef.current = null; }
+    stopLocalFaceModeration();
     pcRef.current = null; dcRef.current = null; peerIdRef.current = null;
     attachStreamToVideo(localVideoRef.current, null, true);
     attachStreamToVideo(remoteVideoRef.current, null, false);
@@ -1630,8 +1727,11 @@ function toggleVideoSize() {
   autoPlay
   muted
   playsInline
-  className={`video ${videoSize}`}
+  className={`video ${videoSize} ${localFaceMissing && !videoOff ? 'face-blur' : ''}`}
 />
+                  {localFaceMissing && !videoOff && (
+                    <div className="face-mod-note">Face not visible: local video blurred</div>
+                  )}
                 </div>
                 <div className="remote">
                   <div className="caption">Remote</div>
