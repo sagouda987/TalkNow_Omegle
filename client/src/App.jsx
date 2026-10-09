@@ -1804,7 +1804,7 @@ function toggleVideoSize() {
     <>
     <div className="app-root">
       <header className="header">
-        <h1 className="rainbow-title">TalkNow — Chat With Stranger</h1>
+        <h1 className="rainbow-title">TalkNow – Practise Languages with Real People</h1>
         <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
           <div className="sub">Happy And Safe Chatting</div>
 		  <div className="sub" style={{fontSize:12, color:'rgba(226,232,240,0.78)'}}>
