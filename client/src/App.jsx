@@ -104,6 +104,8 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [videoOff, setVideoOff] = useState(false);
   const [localFaceMissing, setLocalFaceMissing] = useState(false);
+  const [localVideoReady, setLocalVideoReady] = useState(false);
+  const [remoteVideoReady, setRemoteVideoReady] = useState(false);
 
   // online badge (real or simulated)
   const [onlineCount, setOnlineCount] = useState(0);
@@ -820,6 +822,7 @@ body {
 .local, .remote {
   min-width: 0;
   min-height: 0;
+  position: relative;
   display: flex;
   flex-direction: column;
   padding: 10px;
@@ -843,6 +846,17 @@ body {
   border: 1px solid rgba(148,163,184,0.22);
   transform-origin: center;
   transition: transform .2s ease, filter .2s ease;
+}
+.video-placeholder {
+  position: absolute;
+  inset: 42px 10px 10px;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: #cbd5e1;
+  z-index: 1;
+  pointer-events: none;
 }
 .video.face-blur {
   filter: blur(16px) brightness(0.9);
@@ -1661,6 +1675,8 @@ setInput('');
     if (remoteStreamRef.current) { remoteStreamRef.current.getTracks().forEach(t => t.stop()); remoteStreamRef.current = null; }
     stopLocalFaceModeration();
     pcRef.current = null; dcRef.current = null; peerIdRef.current = null;
+    setLocalVideoReady(false);
+    setRemoteVideoReady(false);
     attachStreamToVideo(localVideoRef.current, null, true);
     attachStreamToVideo(remoteVideoRef.current, null, false);
   }
@@ -1729,7 +1745,7 @@ setInput('');
           <li>Must be 18+ to use this site. Violations lead to suspension or ban.</li>
         </ul>
         <div style={{ marginTop: 8 }}>
-          <a href="#" onClick={(e)=>{ e.preventDefault(); setShowTermsModal(true); }}>Read full Terms & Conditions</a>
+          <a href="/terms/" target="_blank" rel="noopener noreferrer">Read full Terms & Conditions</a>
         </div>
       </div>
     );
@@ -1872,8 +1888,11 @@ function toggleVideoSize() {
               <div className="videos">
                 <div className="local">
                   <div className="caption">Local</div>
+                  {!localVideoReady && <div className="video-placeholder">Your camera will appear here</div>}
                   <video
   ref={localVideoRef}
+  onPlaying={() => setLocalVideoReady(true)}
+  onEmptied={() => setLocalVideoReady(false)}
   autoPlay
   muted
   playsInline
@@ -1885,8 +1904,11 @@ function toggleVideoSize() {
                 </div>
                 <div className="remote">
                   <div className="caption">Remote</div>
+                  {!remoteVideoReady && <div className="video-placeholder">Your partner’s video will appear here</div>}
              <video
   ref={remoteVideoRef}
+  onPlaying={() => setRemoteVideoReady(true)}
+  onEmptied={() => setRemoteVideoReady(false)}
   autoPlay
   playsInline
   className={`video ${videoSize}`}
@@ -1960,7 +1982,9 @@ function toggleVideoSize() {
 
                   <div className="chat-meta">
                     Be respectful. No explicit content or personal info.{' '}
-                    <a href="#" onClick={(e)=>{ e.preventDefault(); setShowTermsModal(true); }}>Read full Terms</a>
+                    <a href="/terms/" target="_blank" rel="noopener noreferrer">Read full Terms</a>
+                    {' · '}
+                    <a href="/privacy/" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
                   </div>
                 </div>
               )}
@@ -2008,6 +2032,7 @@ function toggleVideoSize() {
               (demo: {TEMP_SUSPENSION_MINUTES} minutes). Repeated or severe violations may result in permanent ban.
             </p>
 
+            <p><a href="/terms/" target="_blank" rel="noopener noreferrer">Read full Terms & Conditions</a> · <a href="/privacy/" target="_blank" rel="noopener noreferrer">Privacy Policy</a></p>
             <div style={{marginTop:12}}>
               <label style={{display:'flex', gap:8, alignItems:'center'}}>
                 <input type="checkbox" checked={acceptedTerms} onChange={e => setAcceptedTerms(e.target.checked)} />
