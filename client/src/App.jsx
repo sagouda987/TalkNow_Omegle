@@ -90,6 +90,33 @@ export default function App() {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [ageVerified, setAgeVerified] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(true);
+  const [showWelcomeConsent, setShowWelcomeConsent] = useState(false);
+  const [welcomeAgeConfirmed, setWelcomeAgeConfirmed] = useState(false);
+  const [welcomeTermsAccepted, setWelcomeTermsAccepted] = useState(false);
+  const [welcomeConnectPending, setWelcomeConnectPending] = useState(false);
+
+  useEffect(() => {
+    if (!welcomeConnectPending || !ageVerified || !acceptedTerms) return;
+    setWelcomeConnectPending(false);
+    onStart();
+  }, [welcomeConnectPending, ageVerified, acceptedTerms]);
+
+  useEffect(() => {
+    if (!showWelcome) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [showWelcome]);
+
+  function acceptWelcomeAndConnect() {
+    if (!welcomeAgeConfirmed || !welcomeTermsAccepted || welcomeConnectPending) return;
+    setAgeVerified(true);
+    setAcceptedTerms(true);
+    setShowWelcomeConsent(false);
+    setShowWelcome(false);
+    setWelcomeConnectPending(true);
+  }
 
   // added UI toggles & responsive state
   const [chatCollapsed, setChatCollapsed] = useState(false);
@@ -812,6 +839,22 @@ body {
   align-items: stretch;
 }
 
+.welcome-overlay {
+  position: fixed; inset: 0; z-index: 11000;
+  background: #0f172a; color: #e2e8f0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; overflow-y: auto; box-sizing: border-box;
+}
+.welcome-content { max-width: 700px; text-align: center; }
+.welcome-content h1 { font-size: clamp(2rem, 6vw, 3.5rem); line-height: 1.2; margin: 0 0 24px; }
+.welcome-content p { color: #cbd5e1; font-size: 1.15rem; margin-bottom: 32px; }
+.welcome-start { padding: 16px 36px; font-size: 1.15rem; min-height: 52px; }
+.welcome-consent { width: 100%; max-width: 430px; background: #1e293b; border: 1px solid #475569; border-radius: 16px; padding: 28px; box-sizing: border-box; }
+.welcome-consent h2 { margin: 0 0 24px; }
+.welcome-consent label { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; line-height: 1.6; }
+.welcome-consent input { margin-top: 6px; flex-shrink: 0; }
+.welcome-consent a { color: #93c5fd; text-decoration: underline; }
+.welcome-consent button { width: 100%; min-height: 48px; }
 .videos {
   min-width: 0;
   display: grid;
@@ -1818,7 +1861,7 @@ function toggleVideoSize() {
   // Render
   return (
     <>
-    <div className="app-root">
+    <div className="app-root" inert={showWelcome ? "" : undefined} aria-hidden={showWelcome ? true : undefined}>
       <header className="header">
         <h1 className="rainbow-title">TalkNow – Practise Languages with Real People</h1>
         <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
@@ -2057,7 +2100,25 @@ function toggleVideoSize() {
         </div>
       )}
     </div>
-    {showFloatingLive && !liveChatHidden && (
+    {showWelcome && (
+      <div className="welcome-overlay">
+        {!showWelcomeConsent ? (
+          <section className="welcome-content" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+            <h1 id="welcome-title">Practise English with real people 🗣️</h1>
+            <p>Free • No signup • Text, voice or video</p>
+            <button autoFocus className="btn welcome-start" onClick={() => setShowWelcomeConsent(true)}>Start talking</button>
+          </section>
+        ) : (
+          <section className="welcome-consent" role="dialog" aria-modal="true" aria-labelledby="welcome-consent-title">
+            <h2 id="welcome-consent-title">Before you start</h2>
+            <label><input autoFocus type="checkbox" checked={welcomeAgeConfirmed} onChange={e => setWelcomeAgeConfirmed(e.target.checked)} /><span>I am 18 or older</span></label>
+            <label><input type="checkbox" checked={welcomeTermsAccepted} onChange={e => setWelcomeTermsAccepted(e.target.checked)} /><span>I accept the <a href="/terms" target="_blank" rel="noopener noreferrer">Terms &amp; Conditions</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a></span></label>
+            <button className="btn" disabled={!welcomeAgeConfirmed || !welcomeTermsAccepted || welcomeConnectPending} onClick={acceptWelcomeAndConnect}>Accept &amp; connect</button>
+          </section>
+        )}
+      </div>
+    )}
+    {!showWelcome && showFloatingLive && !liveChatHidden && (
       <aside className="floating-live-chat" aria-label="Live community chat">
         <div className="floating-live-head">
           <span>Live Community Chat</span>
